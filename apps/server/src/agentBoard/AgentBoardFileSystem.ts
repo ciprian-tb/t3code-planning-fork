@@ -26,6 +26,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import type { PlatformError } from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
@@ -85,19 +86,72 @@ export const make = Effect.gen(function* () {
   // project root if boards for different projects ever contend measurably.
   const mutations = yield* Semaphore.make(1);
 
+  /**
+   * `realPath` of the deepest existing ancestor with the still-missing tail
+   * re-appended. `.t3/agent-board.json` and a card workspace do not exist yet
+   * on the very write that creates them, so a plain `realPath` would fail with
+   * `NotFound` and leave the containment check unenforced exactly when it
+   * matters most.
+   */
+  const realPathAllowingMissing = (target: string): Effect.Effect<string, PlatformError> =>
+    fileSystem.realPath(target).pipe(
+      Effect.catch((cause) => {
+        const parent = path.dirname(target);
+        return cause.reason._tag === "NotFound" && parent !== target
+          ? realPathAllowingMissing(parent).pipe(
+              Effect.map((realParent) => path.join(realParent, path.basename(target))),
+            )
+          : Effect.fail(cause);
+      }),
+    );
+
+  /**
+   * `WorkspacePaths.resolveRelativePathWithinRoot` is lexical only, so a
+   * symlinked `.t3` (or `.t3/workspaces`) pointing outside the project passes
+   * it. Mirror the `realPath` containment check `WorkspaceFileSystem.readFile`
+   * applies to workspace files.
+   */
+  const resolveWithinRoot = Effect.fn("AgentBoardFileSystem.resolveWithinRoot")(function* (
+    projectRoot: string,
+    relativePath: string,
+  ) {
+    const resolved = yield* workspacePaths
+      .resolveRelativePathWithinRoot({ workspaceRoot: projectRoot, relativePath })
+      .pipe(Effect.mapError((cause) => boardError(cause.message, cause)));
+    const realRoot = yield* realPathAllowingMissing(projectRoot).pipe(
+      Effect.mapError((cause) =>
+        boardError(`Failed to resolve project root ${projectRoot}.`, cause),
+      ),
+    );
+    const realTarget = yield* realPathAllowingMissing(resolved.absolutePath).pipe(
+      Effect.mapError((cause) =>
+        boardError(`Failed to resolve ${relativePath} in ${projectRoot}.`, cause),
+      ),
+    );
+    const relativeReal = path.relative(realRoot, realTarget);
+    if (
+      relativeReal.length === 0 ||
+      relativeReal === ".." ||
+      relativeReal.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativeReal)
+    ) {
+      return yield* boardError(
+        `Agent board path '${relativePath}' resolves outside project root '${projectRoot}': ${realTarget}`,
+      );
+    }
+    return resolved.absolutePath;
+  });
+
   const resolveBoardPath = Effect.fn("AgentBoardFileSystem.resolveBoardPath")(function* (
     cwd: string,
   ) {
     const projectRoot = yield* workspacePaths
       .normalizeWorkspaceRoot(cwd)
       .pipe(Effect.mapError((cause) => boardError(cause.message, cause)));
-    const resolved = yield* workspacePaths
-      .resolveRelativePathWithinRoot({
-        workspaceRoot: projectRoot,
-        relativePath: AGENT_BOARD_RELATIVE_PATH,
-      })
-      .pipe(Effect.mapError((cause) => boardError(cause.message, cause)));
-    return { projectRoot, absolutePath: resolved.absolutePath };
+    return {
+      projectRoot,
+      absolutePath: yield* resolveWithinRoot(projectRoot, AGENT_BOARD_RELATIVE_PATH),
+    };
   });
 
   const writeBoard = Effect.fn("AgentBoardFileSystem.writeBoard")(function* (
@@ -201,17 +255,12 @@ export const make = Effect.gen(function* () {
         }
 
         const workspacePath = `.t3/workspaces/${agentBoardWorkspaceSegment(card.id)}`;
-        const workspace = yield* workspacePaths
-          .resolveRelativePathWithinRoot({
-            workspaceRoot: loaded.projectRoot,
-            relativePath: workspacePath,
-          })
-          .pipe(Effect.mapError((cause) => boardError(cause.message, cause)));
+        const workspaceAbsolutePath = yield* resolveWithinRoot(loaded.projectRoot, workspacePath);
         yield* fileSystem
-          .makeDirectory(workspace.absolutePath, { recursive: true })
+          .makeDirectory(workspaceAbsolutePath, { recursive: true })
           .pipe(
             Effect.mapError((cause) =>
-              boardError(`Failed to create card workspace at ${workspace.absolutePath}.`, cause),
+              boardError(`Failed to create card workspace at ${workspaceAbsolutePath}.`, cause),
             ),
           );
 

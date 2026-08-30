@@ -220,7 +220,7 @@ describe("AgentBoardFileSystem", () => {
     ),
   );
 
-  it.effect("refuses to operate outside an existing project root", () =>
+  it.effect("fails when the project root does not exist", () =>
     run(
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -232,6 +232,52 @@ describe("AgentBoardFileSystem", () => {
         expect(
           Exit.isFailure(yield* Effect.exit(service.load({ cwd: outside, createIfMissing: true }))),
         ).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("rejects a symlinked .t3 that escapes the project root", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* tempProjectRoot;
+        const outside = yield* tempProjectRoot;
+        yield* fs.symlink(outside, path.join(cwd, ".t3"));
+        const service = yield* AgentBoardFileSystem;
+
+        expect(
+          Exit.isFailure(yield* Effect.exit(service.load({ cwd, createIfMissing: true }))),
+        ).toBe(true);
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(service.save({ cwd, board: readyBoardWith(cwd, "card-1") })),
+          ),
+        ).toBe(true);
+        // Nothing was written through the symlink.
+        expect(yield* fs.exists(path.join(outside, "agent-board.json"))).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("rejects a symlinked .t3/workspaces when claiming", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* tempProjectRoot;
+        const outside = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+        yield* service.save({ cwd, board: readyBoardWith(cwd, "card-1") });
+        yield* fs.symlink(outside, path.join(cwd, ".t3", "workspaces"));
+
+        expect(
+          Exit.isFailure(yield* Effect.exit(service.claim({ cwd, cardId: cardId("card-1") }))),
+        ).toBe(true);
+        expect(yield* fs.exists(path.join(outside, "card-1"))).toBe(false);
+        // The card stays claimable.
+        const loaded = yield* service.load({ cwd });
+        expect(loaded.board.cards[0]?.state).toBe("Ready");
       }),
     ),
   );
