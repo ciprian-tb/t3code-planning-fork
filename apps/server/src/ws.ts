@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+  AgentBoardFileError,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
@@ -77,6 +78,7 @@ import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgro
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
+import * as AgentBoardFileSystem from "./agentBoard/AgentBoardFileSystem.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
@@ -570,6 +572,7 @@ const makeWsRpcLayer = (
         }
         return true;
       });
+      const agentBoard = yield* AgentBoardFileSystem.AgentBoardFileSystem;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
@@ -2331,6 +2334,32 @@ const makeWsRpcLayer = (
                   }),
               ),
             ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsLoadAgentBoard]: (input) =>
+          observeRpcEffect(WS_METHODS.projectsLoadAgentBoard, agentBoard.load(input), {
+            "rpc.aggregate": "workspace",
+          }),
+        [WS_METHODS.projectsSaveAgentBoard]: (input) =>
+          observeRpcEffect(WS_METHODS.projectsSaveAgentBoard, agentBoard.save(input), {
+            "rpc.aggregate": "workspace",
+          }),
+        [WS_METHODS.projectsClaimAgentBoardCard]: (input) =>
+          observeRpcEffect(WS_METHODS.projectsClaimAgentBoardCard, agentBoard.claim(input), {
+            "rpc.aggregate": "workspace",
+          }),
+        // The board runner lands in a later task; the contract already declares
+        // these methods, so the handler object has to stay exhaustive.
+        [WS_METHODS.projectsGetAgentBoardRunnerStatus]: () =>
+          observeRpcEffect(
+            WS_METHODS.projectsGetAgentBoardRunnerStatus,
+            Effect.fail(new AgentBoardFileError({ message: "Runner not available yet" })),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsSetAgentBoardRunnerEnabled]: () =>
+          observeRpcEffect(
+            WS_METHODS.projectsSetAgentBoardRunnerEnabled,
+            Effect.fail(new AgentBoardFileError({ message: "Runner not available yet" })),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.shellOpenInEditor]: (input) =>

@@ -5,6 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
+  AgentBoardCardId,
   AuthAccessTokenType,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
@@ -149,6 +150,7 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as AgentBoardFileSystem from "./agentBoard/AgentBoardFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
@@ -694,6 +696,7 @@ const buildAppUnderTest = (options?: {
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(workspaceEntriesLayer),
       ),
+      AgentBoardFileSystem.AgentBoardFileSystemLive.pipe(Layer.provide(WorkspacePaths.layer)),
       ProjectFaviconResolver.layer.pipe(
         Layer.provide(WorkspacePaths.layer),
         Layer.provide(T3ProjectFileLoader.layer),
@@ -6804,6 +6807,90 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         byteLength: 26,
         truncated: false,
       });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("routes websocket rpc agent board load, save, and claim", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-agent-board-" });
+      const readyCard = {
+        id: AgentBoardCardId.make("card-1"),
+        title: "Wire the board",
+        priority: 1,
+        dependencies: [],
+        parallelism: { safe: "false" as const, conflictsWith: [], allowedWriteScopes: [] },
+        runtime: { attemptCount: 0, turnCount: 0, repairCycleCount: 0, reviewFindings: [] },
+        state: "Ready" as const,
+        intentBrief: {
+          intent: "Expose planning boards to environment clients",
+          acceptanceCriteria: [],
+          constraints: [],
+          nonGoals: [],
+          openDecisions: [],
+        },
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      };
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const { loaded, saved, claimed } = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const loaded = yield* client[WS_METHODS.projectsLoadAgentBoard]({
+              cwd: workspaceRoot,
+              createIfMissing: true,
+            });
+            const saved = yield* client[WS_METHODS.projectsSaveAgentBoard]({
+              cwd: workspaceRoot,
+              board: { ...loaded.board, cards: [readyCard] },
+            });
+            const claimed = yield* client[WS_METHODS.projectsClaimAgentBoardCard]({
+              cwd: workspaceRoot,
+              cardId: readyCard.id,
+            });
+            return { loaded, saved, claimed };
+          }),
+        ),
+      );
+
+      assert.equal(loaded.board.projectRoot, workspaceRoot);
+      assert.equal(loaded.created, true);
+      assert.equal(loaded.relativePath, ".t3/agent-board.json");
+      assert.lengthOf(saved.board.cards, 1);
+      assert.equal(claimed.card.state, "Running");
+      assert.equal(claimed.workspacePath, ".t3/workspaces/card-1");
+
+      // A second, read-only environment client may load the board but never mutate it.
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
+        body: yield* HttpBody.json({ scopes: ["orchestration:read"] }),
+      });
+      const pairingBody = (yield* pairingResponse.json) as { readonly credential: string };
+      assert.equal(pairingResponse.status, 200);
+
+      const readOnlyWsUrl = yield* getWsServerUrl("/ws", { credential: pairingBody.credential });
+      const readOnly = yield* Effect.scoped(
+        withWsRpcClient(readOnlyWsUrl, (client) =>
+          Effect.all({
+            load: client[WS_METHODS.projectsLoadAgentBoard]({ cwd: workspaceRoot }),
+            denied: Effect.flip(
+              client[WS_METHODS.projectsSaveAgentBoard]({
+                cwd: workspaceRoot,
+                board: saved.board,
+              }),
+            ),
+          }),
+        ),
+      );
+
+      assert.lengthOf(readOnly.load.board.cards, 1);
+      assert.equal(readOnly.denied._tag, "EnvironmentAuthorizationError");
+      if (readOnly.denied._tag === "EnvironmentAuthorizationError") {
+        assert.equal(readOnly.denied.requiredScope, "orchestration:operate");
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 

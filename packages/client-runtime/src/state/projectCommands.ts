@@ -49,10 +49,17 @@ export function createProjectEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:projects:optimistic-file:${key}`),
     ),
   );
+  // Project commands identify a project by id, board commands by its checkout
+  // path; either way one project's writes run one at a time.
   const projectConcurrency = {
     mode: "serial" as const,
-    key: ({ environmentId, input }: { environmentId: string; input: { projectId: string } }) =>
-      JSON.stringify([environmentId, input.projectId]),
+    key: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: { projectId: string } | { cwd: string };
+    }) => JSON.stringify([environmentId, "projectId" in input ? input.projectId : input.cwd]),
   };
   return {
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -70,6 +77,12 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:read-file",
       tag: WS_METHODS.projectsReadFile,
       staleTimeMs: 30_000,
+      idleTtlMs: 5 * 60_000,
+    }),
+    loadAgentBoard: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:load-agent-board",
+      tag: WS_METHODS.projectsLoadAgentBoard,
+      staleTimeMs: 5_000,
       idleTtlMs: 5 * 60_000,
     }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
@@ -101,6 +114,18 @@ export function createProjectEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.cwd, input.relativePath]),
       },
+    }),
+    saveAgentBoard: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:save-agent-board",
+      tag: WS_METHODS.projectsSaveAgentBoard,
+      scheduler: fileScheduler,
+      concurrency: projectConcurrency,
+    }),
+    claimAgentBoardCard: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:claim-agent-board-card",
+      tag: WS_METHODS.projectsClaimAgentBoardCard,
+      scheduler: fileScheduler,
+      concurrency: projectConcurrency,
     }),
   };
 }
