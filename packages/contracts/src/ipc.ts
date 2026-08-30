@@ -37,6 +37,14 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type {
+  AgentBoardClaimInput,
+  AgentBoardClaimResult,
+  AgentBoardLoadInput,
+  AgentBoardLoadResult,
+  AgentBoardSaveInput,
+  AgentBoardSaveResult,
+} from "./agentBoard.ts";
+import type {
   TerminalAttachInput,
   TerminalAttachStreamEvent,
   TerminalClearInput,
@@ -1502,6 +1510,9 @@ export interface EnvironmentApi {
     readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+    loadAgentBoard: (input: AgentBoardLoadInput) => Promise<AgentBoardLoadResult>;
+    saveAgentBoard: (input: AgentBoardSaveInput) => Promise<AgentBoardSaveResult>;
+    claimAgentBoardCard: (input: AgentBoardClaimInput) => Promise<AgentBoardClaimResult>;
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;

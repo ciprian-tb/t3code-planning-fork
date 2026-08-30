@@ -151,6 +151,15 @@ import {
   ProjectWriteFileResult,
 } from "./project.ts";
 import {
+  AgentBoardClaimInput,
+  AgentBoardClaimResult,
+  AgentBoardFileError,
+  AgentBoardLoadInput,
+  AgentBoardLoadResult,
+  AgentBoardSaveInput,
+  AgentBoardSaveResult,
+} from "./agentBoard.ts";
+import {
   TerminalAttachInput,
   TerminalAttachStreamEvent,
   TerminalClearInput,
@@ -245,6 +254,9 @@ export const WS_METHODS = {
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
+  projectsLoadAgentBoard: "projects.loadAgentBoard",
+  projectsSaveAgentBoard: "projects.saveAgentBoard",
+  projectsClaimAgentBoardCard: "projects.claimAgentBoardCard",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -811,6 +823,24 @@ const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
 });
 
+export const WsProjectsLoadAgentBoardRpc = Rpc.make(WS_METHODS.projectsLoadAgentBoard, {
+  payload: AgentBoardLoadInput,
+  success: AgentBoardLoadResult,
+  error: Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsSaveAgentBoardRpc = Rpc.make(WS_METHODS.projectsSaveAgentBoard, {
+  payload: AgentBoardSaveInput,
+  success: AgentBoardSaveResult,
+  error: Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError]),
+});
+
+export const WsProjectsClaimAgentBoardCardRpc = Rpc.make(WS_METHODS.projectsClaimAgentBoardCard, {
+  payload: AgentBoardClaimInput,
+  success: AgentBoardClaimResult,
+  error: Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError]),
+});
+
 const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -1247,6 +1277,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
+  WsProjectsLoadAgentBoardRpc,
+  WsProjectsSaveAgentBoardRpc,
+  WsProjectsClaimAgentBoardCardRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAgentSessionsScanRpc,
