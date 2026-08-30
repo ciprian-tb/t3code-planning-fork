@@ -98,7 +98,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsSearchContents]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsSearchEntries]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsWriteFile]: AuthOrchestrationOperateScope,
-  [WS_METHODS.projectsLoadAgentBoard]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsLoadAgentBoard]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsSaveAgentBoard]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsClaimAgentBoardCard]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsGetAgentBoardRunnerStatus]: AuthOrchestrationOperateScope,
