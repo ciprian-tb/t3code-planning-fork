@@ -80,6 +80,7 @@ import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as AgentBoardFileSystem from "./agentBoard/AgentBoardFileSystem.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -389,10 +390,15 @@ const WorkspaceFileSystemLayerLive = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspaceEntriesLayerLive),
 );
 
+const AgentBoardFileSystemLayerLive = AgentBoardFileSystem.AgentBoardFileSystemLive.pipe(
+  Layer.provide(WorkspacePaths.layer),
+);
+
 const WorkspaceLayerLive = Layer.mergeAll(
   WorkspacePaths.layer,
   WorkspaceEntriesLayerLive,
   WorkspaceFileSystemLayerLive,
+  AgentBoardFileSystemLayerLive,
 );
 
 const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(

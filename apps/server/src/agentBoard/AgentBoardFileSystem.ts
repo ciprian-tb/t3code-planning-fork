@@ -1,0 +1,261 @@
+/**
+ * AgentBoardFileSystem - project-local planning board storage.
+ *
+ * The board lives at exactly `.t3/agent-board.json` below a validated project
+ * root. Every mutation is validated against `AgentBoardFile`, serialized behind
+ * a single semaphore and written atomically, so a claim can never interleave
+ * with a concurrent save.
+ *
+ * @module AgentBoardFileSystem
+ */
+import {
+  AGENT_BOARD_RELATIVE_PATH,
+  AgentBoardFile,
+  AgentBoardFileError,
+  type AgentBoardClaimInput,
+  type AgentBoardClaimResult,
+  type AgentBoardLoadInput,
+  type AgentBoardLoadResult,
+  type AgentBoardSaveInput,
+  type AgentBoardSaveResult,
+} from "@t3tools/contracts";
+import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+
+import { writeFileStringAtomically } from "../atomicWrite.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+
+/** Service tag for project-local agent board storage. */
+export class AgentBoardFileSystem extends Context.Service<
+  AgentBoardFileSystem,
+  {
+    /** Read the board, optionally seeding an empty one when the file is absent. */
+    readonly load: (
+      input: AgentBoardLoadInput,
+    ) => Effect.Effect<AgentBoardLoadResult, AgentBoardFileError>;
+    /** Validate and atomically replace the board. */
+    readonly save: (
+      input: AgentBoardSaveInput,
+    ) => Effect.Effect<AgentBoardSaveResult, AgentBoardFileError>;
+    /** Move a `Ready` card to `Running` and reserve its workspace directory. */
+    readonly claim: (
+      input: AgentBoardClaimInput,
+    ) => Effect.Effect<AgentBoardClaimResult, AgentBoardFileError>;
+  }
+>()("t3/agentBoard/AgentBoardFileSystem") {}
+
+const AgentBoardFileJson = fromJsonStringPretty(AgentBoardFile);
+const decodeAgentBoardFile = Schema.decodeUnknownEffect(AgentBoardFile);
+const decodeAgentBoardFileJson = Schema.decodeUnknownEffect(AgentBoardFileJson);
+const encodeAgentBoardFileJson = Schema.encodeUnknownEffect(AgentBoardFileJson);
+
+const boardError = (message: string, cause?: unknown): AgentBoardFileError =>
+  new AgentBoardFileError({ message, cause });
+
+/**
+ * Card ids are user-authored, so they are reduced to `[A-Za-z0-9_-]` before
+ * becoming a directory name: no id can produce a `.` or `/` segment that walks
+ * out of `.t3/workspaces`.
+ *
+ * ponytail: two ids differing only in punctuation collide onto one directory;
+ * add a short hash suffix if that ever bites.
+ */
+function agentBoardWorkspaceSegment(cardId: string): string {
+  const segment = cardId
+    .replaceAll(/[^a-zA-Z0-9_-]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return segment.length > 0 ? segment : "card";
+}
+
+export const make = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+  // Every operation takes this permit, including `load`: reads must not observe
+  // a board mid-rewrite, and `load` itself writes when seeding a missing board.
+  // ponytail: one process-wide lock covers every project's board; split per
+  // project root if boards for different projects ever contend measurably.
+  const mutations = yield* Semaphore.make(1);
+
+  const resolveBoardPath = Effect.fn("AgentBoardFileSystem.resolveBoardPath")(function* (
+    cwd: string,
+  ) {
+    const projectRoot = yield* workspacePaths
+      .normalizeWorkspaceRoot(cwd)
+      .pipe(Effect.mapError((cause) => boardError(cause.message, cause)));
+    const resolved = yield* workspacePaths
+      .resolveRelativePathWithinRoot({
+        workspaceRoot: projectRoot,
+        relativePath: AGENT_BOARD_RELATIVE_PATH,
+      })
+      .pipe(Effect.mapError((cause) => boardError(cause.message, cause)));
+    return { projectRoot, absolutePath: resolved.absolutePath };
+  });
+
+  const writeBoard = Effect.fn("AgentBoardFileSystem.writeBoard")(function* (
+    absolutePath: string,
+    board: AgentBoardFile,
+  ) {
+    const contents = yield* encodeAgentBoardFileJson(board).pipe(
+      Effect.mapError((cause) =>
+        boardError(`Agent board is not serializable: ${cause.message}`, cause),
+      ),
+    );
+    yield* writeFileStringAtomically({ filePath: absolutePath, contents: `${contents}\n` }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError((cause) =>
+        boardError(`Failed to write agent board at ${absolutePath}.`, cause),
+      ),
+    );
+  });
+
+  const decodeBoard = (board: unknown) =>
+    decodeAgentBoardFile(board).pipe(
+      Effect.mapError((cause) => boardError(`Invalid agent board: ${cause.message}`, cause)),
+    );
+
+  /** Unguarded read used by both the public `load` and `claim`. */
+  const readBoard = Effect.fn("AgentBoardFileSystem.readBoard")(function* (
+    input: AgentBoardLoadInput,
+  ) {
+    const { projectRoot, absolutePath } = yield* resolveBoardPath(input.cwd);
+    const raw = yield* fileSystem
+      .readFileString(absolutePath)
+      .pipe(
+        Effect.catch((cause) =>
+          cause.reason._tag === "NotFound" && input.createIfMissing === true
+            ? Effect.succeed(null)
+            : Effect.fail(boardError(`Failed to read agent board at ${absolutePath}.`, cause)),
+        ),
+      );
+
+    if (raw === null) {
+      const timestamp = DateTime.formatIso(yield* DateTime.now);
+      const board = yield* decodeBoard({ projectRoot, createdAt: timestamp, updatedAt: timestamp });
+      yield* writeBoard(absolutePath, board);
+      return { projectRoot, absolutePath, board, created: true };
+    }
+
+    const board = yield* decodeAgentBoardFileJson(raw).pipe(
+      Effect.mapError((cause) =>
+        boardError(`Invalid agent board at ${absolutePath}: ${cause.message}`, cause),
+      ),
+    );
+    return { projectRoot, absolutePath, board, created: false };
+  });
+
+  /** Unguarded validate-and-write used by both the public `save` and `claim`. */
+  const persistBoard = Effect.fn("AgentBoardFileSystem.persistBoard")(function* (
+    projectRoot: string,
+    absolutePath: string,
+    board: object,
+  ) {
+    const decoded = yield* decodeBoard({ ...board, projectRoot });
+    yield* writeBoard(absolutePath, decoded);
+    return decoded;
+  });
+
+  const load: AgentBoardFileSystem["Service"]["load"] = (input) =>
+    mutations.withPermit(
+      readBoard(input).pipe(
+        Effect.map(
+          (result): AgentBoardLoadResult => ({
+            board: result.board,
+            relativePath: AGENT_BOARD_RELATIVE_PATH,
+            created: result.created,
+          }),
+        ),
+      ),
+    );
+
+  const save: AgentBoardFileSystem["Service"]["save"] = (input) =>
+    mutations.withPermit(
+      Effect.gen(function* () {
+        const { projectRoot, absolutePath } = yield* resolveBoardPath(input.cwd);
+        const board = yield* persistBoard(projectRoot, absolutePath, input.board);
+        return { board, relativePath: AGENT_BOARD_RELATIVE_PATH } satisfies AgentBoardSaveResult;
+      }),
+    );
+
+  const claim: AgentBoardFileSystem["Service"]["claim"] = (input) =>
+    mutations.withPermit(
+      Effect.gen(function* () {
+        const loaded = yield* readBoard({ cwd: input.cwd });
+        const card = loaded.board.cards.find((candidate) => candidate.id === input.cardId);
+        if (!card) {
+          return yield* boardError(`Agent board card not found: ${input.cardId}`);
+        }
+        if (card.state !== "Ready") {
+          return yield* boardError(
+            `Only Ready cards can be claimed. ${input.cardId} is ${card.state}.`,
+          );
+        }
+
+        const workspacePath = `.t3/workspaces/${agentBoardWorkspaceSegment(card.id)}`;
+        const workspace = yield* workspacePaths
+          .resolveRelativePathWithinRoot({
+            workspaceRoot: loaded.projectRoot,
+            relativePath: workspacePath,
+          })
+          .pipe(Effect.mapError((cause) => boardError(cause.message, cause)));
+        yield* fileSystem
+          .makeDirectory(workspace.absolutePath, { recursive: true })
+          .pipe(
+            Effect.mapError((cause) =>
+              boardError(`Failed to create card workspace at ${workspace.absolutePath}.`, cause),
+            ),
+          );
+
+        const timestamp = DateTime.formatIso(yield* DateTime.now);
+        const {
+          currentError: _currentError,
+          currentDecisionQuestion: _currentDecisionQuestion,
+          ...runtime
+        } = card.runtime;
+        const nextBoard = {
+          ...loaded.board,
+          cards: loaded.board.cards.map((candidate) =>
+            candidate.id === input.cardId
+              ? {
+                  ...candidate,
+                  state: "Running",
+                  updatedAt: timestamp,
+                  runtime: {
+                    ...runtime,
+                    attemptCount: runtime.attemptCount + 1,
+                    lastHeartbeatAt: timestamp,
+                    workspacePath,
+                  },
+                }
+              : candidate,
+          ),
+          updatedAt: timestamp,
+        };
+
+        const board = yield* persistBoard(loaded.projectRoot, loaded.absolutePath, nextBoard);
+        const claimed = board.cards.find((candidate) => candidate.id === input.cardId);
+        if (!claimed) {
+          return yield* boardError(`Claimed card missing after save: ${input.cardId}`);
+        }
+        return {
+          board,
+          card: claimed,
+          relativePath: AGENT_BOARD_RELATIVE_PATH,
+          workspacePath,
+        } satisfies AgentBoardClaimResult;
+      }),
+    );
+
+  return AgentBoardFileSystem.of({ load, save, claim });
+});
+
+export const AgentBoardFileSystemLive = Layer.effect(AgentBoardFileSystem, make);

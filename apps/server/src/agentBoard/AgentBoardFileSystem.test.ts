@@ -1,0 +1,271 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+
+import {
+  AGENT_BOARD_RELATIVE_PATH,
+  AgentBoardFile,
+  type AgentBoardCardId,
+} from "@t3tools/contracts";
+
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { AgentBoardFileSystem, AgentBoardFileSystemLive } from "./AgentBoardFileSystem.ts";
+
+// `provideMerge` so the tests themselves can reach FileSystem/Path to build fixtures.
+const layer = AgentBoardFileSystemLive.pipe(
+  Layer.provide(WorkspacePaths.layer),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+const decodeBoard = Schema.decodeUnknownSync(AgentBoardFile);
+
+const TIMESTAMP = "2026-08-30T10:00:00.000Z";
+
+const cardId = (value: string): AgentBoardCardId => value as AgentBoardCardId;
+
+const readyBoardWith = (projectRoot: string, id: string) =>
+  decodeBoard({
+    projectRoot,
+    cards: [
+      {
+        id,
+        title: "Ship the thing",
+        state: "Ready",
+        intentBrief: { intent: "Ship the thing" },
+        runtime: { currentError: "boom", currentDecisionQuestion: "which way?" },
+        createdAt: TIMESTAMP,
+        updatedAt: TIMESTAMP,
+      },
+    ],
+    createdAt: TIMESTAMP,
+    updatedAt: TIMESTAMP,
+  });
+
+const tempProjectRoot = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.makeTempDirectoryScoped({ prefix: "agent-board-fs-" });
+});
+
+const run = <A, E>(
+  effect: Effect.Effect<
+    A,
+    E,
+    AgentBoardFileSystem | FileSystem.FileSystem | Path.Path | Scope.Scope
+  >,
+) => effect.pipe(Effect.scoped, Effect.provide(layer));
+
+describe("AgentBoardFileSystem", () => {
+  it.effect("creates a valid default board only when requested", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+
+        const loaded = yield* service.load({ cwd, createIfMissing: true });
+        expect(loaded.board.projectRoot).toBe(cwd);
+        expect(loaded.board.cards).toEqual([]);
+        expect(loaded.created).toBe(true);
+        expect(loaded.relativePath).toBe(AGENT_BOARD_RELATIVE_PATH);
+
+        const contents = yield* fs.readFileString(path.join(cwd, AGENT_BOARD_RELATIVE_PATH));
+        expect(contents.endsWith("\n")).toBe(true);
+        expect(contents).toContain('\n  "projectRoot"');
+
+        const reloaded = yield* service.load({ cwd });
+        expect(reloaded.created).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("fails when the board is missing and creation was not requested", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+
+        expect(Exit.isFailure(yield* Effect.exit(service.load({ cwd })))).toBe(true);
+        expect(yield* fs.exists(path.join(cwd, AGENT_BOARD_RELATIVE_PATH))).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("fails on malformed JSON without overwriting the file", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* tempProjectRoot;
+        const boardPath = path.join(cwd, AGENT_BOARD_RELATIVE_PATH);
+        yield* fs.makeDirectory(path.dirname(boardPath), { recursive: true });
+        yield* fs.writeFileString(boardPath, "{ not json");
+        const service = yield* AgentBoardFileSystem;
+
+        const exit = yield* Effect.exit(service.load({ cwd, createIfMissing: true }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(yield* fs.readFileString(boardPath)).toBe("{ not json");
+      }),
+    ),
+  );
+
+  it.effect("rejects a Ready card without an intent brief and leaves the board untouched", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+
+        const invalid = {
+          schemaVersion: 1,
+          projectRoot: cwd,
+          defaultView: "kanban",
+          runner: { maxConcurrentCards: 1, repairCycles: 3 },
+          graphLinks: [],
+          cards: [
+            {
+              id: "card-1",
+              title: "Ready without a brief",
+              state: "Ready",
+              priority: 3,
+              dependencies: [],
+              parallelism: { safe: "false", conflictsWith: [], allowedWriteScopes: [] },
+              runtime: { attemptCount: 0 },
+              createdAt: TIMESTAMP,
+              updatedAt: TIMESTAMP,
+            },
+          ],
+          createdAt: TIMESTAMP,
+          updatedAt: TIMESTAMP,
+        } as unknown as AgentBoardFile;
+
+        expect(Exit.isFailure(yield* Effect.exit(service.save({ cwd, board: invalid })))).toBe(
+          true,
+        );
+        expect(yield* fs.exists(path.join(cwd, AGENT_BOARD_RELATIVE_PATH))).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("claims a Ready card into a workspace directory", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+        yield* service.save({ cwd, board: readyBoardWith(cwd, "card-1") });
+
+        const claimed = yield* service.claim({ cwd, cardId: cardId("card-1") });
+        expect(claimed.workspacePath).toBe(".t3/workspaces/card-1");
+        expect(claimed.card.state).toBe("Running");
+        expect(claimed.card.runtime.attemptCount).toBe(1);
+        expect(claimed.card.runtime.workspacePath).toBe(".t3/workspaces/card-1");
+        expect(claimed.card.runtime.lastHeartbeatAt).toBeDefined();
+        expect(claimed.card.runtime.currentError).toBeUndefined();
+        expect(claimed.card.runtime.currentDecisionQuestion).toBeUndefined();
+
+        const stat = yield* fs.stat(path.join(cwd, ".t3", "workspaces", "card-1"));
+        expect(stat.type).toBe("Directory");
+
+        const persisted = yield* service.load({ cwd });
+        expect(persisted.board.cards[0]?.state).toBe("Running");
+      }),
+    ),
+  );
+
+  it.effect("allows only one concurrent claim of the same Ready card", () =>
+    run(
+      Effect.gen(function* () {
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+        yield* service.save({ cwd, board: readyBoardWith(cwd, "card-1") });
+
+        const exits = yield* Effect.all(
+          [
+            service.claim({ cwd, cardId: cardId("card-1") }),
+            service.claim({ cwd, cardId: cardId("card-1") }),
+          ].map(Effect.exit),
+          { concurrency: "unbounded" },
+        );
+        expect(exits.filter(Exit.isSuccess)).toHaveLength(1);
+        expect(exits.filter(Exit.isFailure)).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("keeps traversal card ids inside the project workspaces directory", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+        yield* service.save({ cwd, board: readyBoardWith(cwd, "../../etc/passwd") });
+
+        const claimed = yield* service.claim({ cwd, cardId: cardId("../../etc/passwd") });
+        expect(claimed.workspacePath.startsWith(".t3/workspaces/")).toBe(true);
+        expect(claimed.workspacePath).not.toContain("..");
+        expect(yield* fs.exists(path.join(cwd, claimed.workspacePath))).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("refuses to operate outside an existing project root", () =>
+    run(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+
+        // A traversal cwd resolves outside the temp root, where no project exists.
+        const outside = path.join(cwd, "..", "agent-board-fs-missing");
+        expect(
+          Exit.isFailure(yield* Effect.exit(service.load({ cwd: outside, createIfMissing: true }))),
+        ).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("refuses to claim a card that is not Ready or not present", () =>
+    run(
+      Effect.gen(function* () {
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+        yield* service.save({
+          cwd,
+          board: decodeBoard({
+            projectRoot: cwd,
+            cards: [
+              {
+                id: "card-1",
+                title: "Not ready",
+                state: "Backlog",
+                createdAt: TIMESTAMP,
+                updatedAt: TIMESTAMP,
+              },
+            ],
+            createdAt: TIMESTAMP,
+            updatedAt: TIMESTAMP,
+          }),
+        });
+
+        expect(
+          Exit.isFailure(yield* Effect.exit(service.claim({ cwd, cardId: cardId("card-1") }))),
+        ).toBe(true);
+        expect(
+          Exit.isFailure(yield* Effect.exit(service.claim({ cwd, cardId: cardId("nope") }))),
+        ).toBe(true);
+      }),
+    ),
+  );
+});
