@@ -156,8 +156,11 @@ import {
   AgentBoardFileError,
   AgentBoardLoadInput,
   AgentBoardLoadResult,
+  AgentBoardRunnerStatus,
+  AgentBoardRunnerStatusInput,
   AgentBoardSaveInput,
   AgentBoardSaveResult,
+  AgentBoardSetRunnerEnabledInput,
 } from "./agentBoard.ts";
 import {
   TerminalAttachInput,
@@ -257,6 +260,8 @@ export const WS_METHODS = {
   projectsLoadAgentBoard: "projects.loadAgentBoard",
   projectsSaveAgentBoard: "projects.saveAgentBoard",
   projectsClaimAgentBoardCard: "projects.claimAgentBoardCard",
+  projectsGetAgentBoardRunnerStatus: "projects.getAgentBoardRunnerStatus",
+  projectsSetAgentBoardRunnerEnabled: "projects.setAgentBoardRunnerEnabled",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -841,6 +846,24 @@ export const WsProjectsClaimAgentBoardCardRpc = Rpc.make(WS_METHODS.projectsClai
   error: Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError]),
 });
 
+export const WsProjectsGetAgentBoardRunnerStatusRpc = Rpc.make(
+  WS_METHODS.projectsGetAgentBoardRunnerStatus,
+  {
+    payload: AgentBoardRunnerStatusInput,
+    success: AgentBoardRunnerStatus,
+    error: Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsProjectsSetAgentBoardRunnerEnabledRpc = Rpc.make(
+  WS_METHODS.projectsSetAgentBoardRunnerEnabled,
+  {
+    payload: AgentBoardSetRunnerEnabledInput,
+    success: AgentBoardSaveResult,
+    error: Schema.Union([AgentBoardFileError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -1280,6 +1303,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsLoadAgentBoardRpc,
   WsProjectsSaveAgentBoardRpc,
   WsProjectsClaimAgentBoardCardRpc,
+  WsProjectsGetAgentBoardRunnerStatusRpc,
+  WsProjectsSetAgentBoardRunnerEnabledRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAgentSessionsScanRpc,

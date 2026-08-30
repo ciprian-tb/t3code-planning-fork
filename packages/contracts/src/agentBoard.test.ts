@@ -1,9 +1,13 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { AgentBoardFile } from "./agentBoard.ts";
+import { AgentBoardFile, AgentBoardReviewResult, AgentBoardWorkerResult } from "./agentBoard.ts";
+
+const NOW = "2026-08-30T00:00:00.000Z";
 
 const decodeAgentBoardFile = Schema.decodeUnknownSync(AgentBoardFile);
+const decodeWorkerResult = Schema.decodeUnknownSync(AgentBoardWorkerResult);
+const decodeReviewResult = Schema.decodeUnknownSync(AgentBoardReviewResult);
 
 // The two Ready-card fixtures differ by exactly one key, so the pass/throw pair
 // below isolates the "Ready requires an intent brief" rule from every other check.
@@ -51,7 +55,7 @@ describe("AgentBoardFile", () => {
     expect(board.defaultView).toBe("kanban");
     expect(board.cards).toEqual([]);
     expect(board.graphLinks).toEqual([]);
-    expect(board.runner).toEqual({ maxConcurrentCards: 1, repairCycles: 3 });
+    expect(board.runner).toEqual({ enabled: false, maxConcurrentCards: 1, repairCycles: 3 });
   });
 
   it("rejects a Ready card without an intent brief", () => {
@@ -114,5 +118,48 @@ describe("AgentBoardFile", () => {
 
     expect(board.cards[0]?.state).toBe("Draft");
     expect(board.cards[0]?.intentBrief).toBeUndefined();
+  });
+
+  it("decodes a legacy card without runner fields to safe defaults", () => {
+    const board = decodeAgentBoardFile({
+      schemaVersion: 1,
+      projectRoot: "/repo",
+      cards: [{ id: "CARD-1", title: "Legacy", state: "Backlog", createdAt: NOW, updatedAt: NOW }],
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+
+    expect(board.runner.enabled).toBe(false);
+    expect(board.cards[0]?.runtime.turnCount).toBe(0);
+    expect(board.cards[0]?.runtime.repairCycleCount).toBe(0);
+    expect(board.cards[0]?.runtime.reviewFindings).toEqual([]);
+    expect(board.cards[0]?.runtime.phase).toBeUndefined();
+  });
+});
+
+describe("AgentBoard result protocol", () => {
+  it("requires a question for a needs-decision worker result", () => {
+    expect(() => decodeWorkerResult({ outcome: "needs-decision", summary: "x" })).toThrow();
+    expect(decodeWorkerResult({ outcome: "done", summary: "shipped" }).outcome).toBe("done");
+  });
+
+  it("requires findings for a changes-requested review result", () => {
+    expect(() =>
+      decodeReviewResult({
+        outcome: "changes-requested",
+        summary: "x",
+      }),
+    ).toThrow();
+    expect(
+      decodeReviewResult({
+        outcome: "changes-requested",
+        summary: "x",
+        findings: ["missing test"],
+      }).findings,
+    ).toEqual(["missing test"]);
+  });
+
+  it("requires a question for a needs-decision review result", () => {
+    expect(() => decodeReviewResult({ outcome: "needs-decision", summary: "x" })).toThrow();
   });
 });

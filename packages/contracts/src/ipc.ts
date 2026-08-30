@@ -41,8 +41,11 @@ import type {
   AgentBoardClaimResult,
   AgentBoardLoadInput,
   AgentBoardLoadResult,
+  AgentBoardRunnerStatus,
+  AgentBoardRunnerStatusInput,
   AgentBoardSaveInput,
   AgentBoardSaveResult,
+  AgentBoardSetRunnerEnabledInput,
 } from "./agentBoard.ts";
 import type {
   TerminalAttachInput,
@@ -1513,6 +1516,12 @@ export interface EnvironmentApi {
     loadAgentBoard: (input: AgentBoardLoadInput) => Promise<AgentBoardLoadResult>;
     saveAgentBoard: (input: AgentBoardSaveInput) => Promise<AgentBoardSaveResult>;
     claimAgentBoardCard: (input: AgentBoardClaimInput) => Promise<AgentBoardClaimResult>;
+    getAgentBoardRunnerStatus: (
+      input: AgentBoardRunnerStatusInput,
+    ) => Promise<AgentBoardRunnerStatus>;
+    setAgentBoardRunnerEnabled: (
+      input: AgentBoardSetRunnerEnabledInput,
+    ) => Promise<AgentBoardSaveResult>;
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
