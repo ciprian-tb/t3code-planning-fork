@@ -5,6 +5,40 @@ import { AgentBoardFile } from "./agentBoard.ts";
 
 const decodeAgentBoardFile = Schema.decodeUnknownSync(AgentBoardFile);
 
+// The two Ready-card fixtures differ by exactly one key, so the pass/throw pair
+// below isolates the "Ready requires an intent brief" rule from every other check.
+const seededReadyCardWithoutBrief = {
+  id: "TASK-20260505-agent-board-contract",
+  title: "Define board file contract",
+  state: "Ready",
+  taskRecordPath: "docs/agents/tasks/TASK-20260505-agent-board-contract.md",
+  slicePlanPath: "docs/agents/slices/authoritative-agent-board.md",
+  graphPosition: { x: 640, y: 120 },
+  parallelism: {
+    safe: "conditional",
+    reason: "Schema-only work can run beside UI planning.",
+    allowedWriteScopes: ["packages/contracts/src/agentBoard.ts"],
+  },
+  createdAt: "2026-08-30T00:00:00.000Z",
+  updatedAt: "2026-08-30T00:00:00.000Z",
+};
+
+const seededReadyCard = {
+  ...seededReadyCardWithoutBrief,
+  intentBrief: {
+    intent: "Create the first durable schema for the project-local agent board file.",
+    acceptanceCriteria: ["Board files decode through the shared contracts package."],
+  },
+};
+
+const boardWithCard = (card: object) => ({
+  projectRoot: "/repo",
+  createdAt: "2026-08-30T00:00:00.000Z",
+  updatedAt: "2026-08-30T00:00:00.000Z",
+  graphLinks: [{ from: "area:Backend", to: "area:Frontend" }],
+  cards: [card],
+});
+
 describe("AgentBoardFile", () => {
   it("defaults a minimal board to kanban with no cards", () => {
     const board = decodeAgentBoardFile({
@@ -25,7 +59,16 @@ describe("AgentBoardFile", () => {
       decodeAgentBoardFile({
         schemaVersion: 1,
         projectRoot: "/repo",
-        cards: [{ id: "CARD-1", title: "Ship", state: "Ready", priority: "high" }],
+        cards: [
+          {
+            id: "CARD-1",
+            title: "Ship",
+            state: "Ready",
+            priority: 1,
+            createdAt: "2026-08-30T00:00:00.000Z",
+            updatedAt: "2026-08-30T00:00:00.000Z",
+          },
+        ],
         createdAt: "2026-08-30T00:00:00.000Z",
         updatedAt: "2026-08-30T00:00:00.000Z",
       }),
@@ -33,33 +76,7 @@ describe("AgentBoardFile", () => {
   });
 
   it("decodes a seeded board with runtime, graph, and parallelism metadata", () => {
-    const board = decodeAgentBoardFile({
-      projectRoot: "/repo",
-      createdAt: "2026-08-30T00:00:00.000Z",
-      updatedAt: "2026-08-30T00:00:00.000Z",
-      graphLinks: [{ from: "area:Backend", to: "area:Frontend" }],
-      cards: [
-        {
-          id: "TASK-20260505-agent-board-contract",
-          title: "Define board file contract",
-          state: "Ready",
-          taskRecordPath: "docs/agents/tasks/TASK-20260505-agent-board-contract.md",
-          slicePlanPath: "docs/agents/slices/authoritative-agent-board.md",
-          graphPosition: { x: 640, y: 120 },
-          intentBrief: {
-            intent: "Create the first durable schema for the project-local agent board file.",
-            acceptanceCriteria: ["Board files decode through the shared contracts package."],
-          },
-          parallelism: {
-            safe: "conditional",
-            reason: "Schema-only work can run beside UI planning.",
-            allowedWriteScopes: ["packages/contracts/src/agentBoard.ts"],
-          },
-          createdAt: "2026-08-30T00:00:00.000Z",
-          updatedAt: "2026-08-30T00:00:00.000Z",
-        },
-      ],
-    });
+    const board = decodeAgentBoardFile(boardWithCard(seededReadyCard));
 
     expect(board.schemaVersion).toBe(1);
     expect(board.cards[0]?.state).toBe("Ready");
@@ -73,6 +90,10 @@ describe("AgentBoardFile", () => {
     expect(board.graphLinks).toEqual([
       { from: "area:Backend", to: "area:Frontend", kind: "depends-on" },
     ]);
+  });
+
+  it("rejects that same seeded card once only its intent brief is removed", () => {
+    expect(() => decodeAgentBoardFile(boardWithCard(seededReadyCardWithoutBrief))).toThrow();
   });
 
   it("decodes a non-Ready card without an intent brief", () => {
