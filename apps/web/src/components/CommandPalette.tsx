@@ -43,12 +43,14 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  KanbanSquareIcon,
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -72,6 +74,7 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
+import { usePlanningFeaturesDisabled } from "../planningFeaturesState";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
@@ -568,6 +571,7 @@ function OpenCommandPaletteDialog(props: {
 }) {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
+  const [planningFeaturesDisabled, togglePlanningFeaturesDisabled] = usePlanningFeaturesDisabled();
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -1723,6 +1727,36 @@ function OpenCommandPaletteDialog(props: {
         await navigate({
           to: "/projects/$projectKey",
           params: { projectKey: contextualProjectGroup.projectKey },
+        });
+      },
+    });
+
+    // The entry stays listed while the Break control is pulled, because it is
+    // the only place left that shows Planning is off and can turn it back on.
+    actionItems.push({
+      kind: "action",
+      value: "action:planning",
+      searchTerms: ["planning", "board", "kanban", "cards", "agent board", "break"],
+      title: planningFeaturesDisabled ? "Re-enable planning" : "Open planning",
+      description: planningFeaturesDisabled
+        ? "Planning is disabled by the Break control"
+        : contextualProjectGroup.displayName,
+      icon: planningFeaturesDisabled ? (
+        <TriangleAlertIcon className={ITEM_ICON_CLASS} />
+      ) : (
+        <KanbanSquareIcon className={ITEM_ICON_CLASS} />
+      ),
+      run: async () => {
+        if (planningFeaturesDisabled) {
+          togglePlanningFeaturesDisabled();
+          return;
+        }
+        await navigate({
+          to: "/planning/$environmentId/$projectId",
+          params: {
+            environmentId: contextualProjectGroup.environmentId,
+            projectId: contextualProjectGroup.id,
+          },
         });
       },
     });

@@ -45,6 +45,8 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  KanbanSquareIcon,
+  MessageSquareIcon,
   PinIcon,
   PinOffIcon,
   PlusIcon,
@@ -139,6 +141,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
+import { usePlanningFeaturesDisabled } from "../planningFeaturesState";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
@@ -2409,6 +2412,8 @@ export default function Sidebar() {
     clearSelection();
   }, [clearSelection, projectScopeKey]);
 
+  const [planningFeaturesDisabled] = usePlanningFeaturesDisabled();
+
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot) => {
       if (isMobile) {
@@ -2437,6 +2442,22 @@ export default function Sidebar() {
       openProjectSettings(projectGroup);
     },
     [openProjectSettings],
+  );
+
+  const handleOpenPlanning = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>, projectGroup: SidebarProjectSnapshot) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dispatchProjectScopeMenu({ type: "project-settings-opened" });
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void router.navigate({
+        to: "/planning/$environmentId/$projectId",
+        params: { environmentId: projectGroup.environmentId, projectId: projectGroup.id },
+      });
+    },
+    [isMobile, router, setOpenMobile],
   );
 
   // Keep a dropped row at its destination while its server applies the
@@ -4480,6 +4501,21 @@ export default function Sidebar() {
                               <FolderIcon className="size-4 shrink-0" />
                             )}
                             <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                            {project && !planningFeaturesDisabled ? (
+                              <Button
+                                size="icon-xs"
+                                variant="ghost-muted"
+                                aria-label={`Open planning for ${project.displayName}`}
+                                title={`Open planning for ${project.displayName}`}
+                                className="ml-auto size-6 [--control-icon-color:currentColor] text-icon-muted focus-visible:bg-accent focus-visible:text-foreground"
+                                onPointerDown={(event) => event.stopPropagation()}
+                                onClick={(event) => {
+                                  void handleOpenPlanning(event, project);
+                                }}
+                              >
+                                <KanbanSquareIcon className="size-3.5" />
+                              </Button>
+                            ) : null}
                             {project ? (
                               <Button
                                 size="icon-xs"
