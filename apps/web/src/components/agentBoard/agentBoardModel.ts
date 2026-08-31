@@ -173,6 +173,20 @@ export function intentBriefFromDraft(draft: IntentDraft): AgentBoardIntentBrief 
   };
 }
 
+/**
+ * Why a blank intent cannot just be saved: `intentBriefFromDraft` returns null,
+ * and the card keeps its old brief, so the user's other intent edits vanish
+ * with no sign anything went wrong. Returns the message to show, or null to save.
+ */
+export function intentSaveError(card: AgentBoardCard, draft: IntentDraft): string | null {
+  if (intentBriefFromDraft(draft)) return null;
+  const hasSomethingToLose =
+    card.state === "Ready" ||
+    card.intentBrief !== undefined ||
+    Object.values(draft).some((value) => value.trim());
+  return hasSomethingToLose ? "Intent is required before saving a brief." : null;
+}
+
 export function detailDraftFromCard(card: AgentBoardCard): DetailDraft {
   return {
     title: card.title,

@@ -10,6 +10,7 @@ import {
   groupDependencyTreeCards,
   intentBriefFromDraft,
   intentDraftFromCard,
+  intentSaveError,
   newCardForState,
   sortCardsForTable,
   updateCard,
@@ -281,5 +282,43 @@ describe("buildExecutionTree", () => {
       "independent",
     );
     expect(rows.some((row) => row.kind === "tier")).toBe(false);
+  });
+});
+
+describe("intentSaveError", () => {
+  const blank = intentDraftFromCard(card("A"));
+
+  it("lets a Draft card with no brief save detail-only edits", () => {
+    expect(intentSaveError(card("A"), blank)).toBeNull();
+  });
+
+  it("refuses when blanking the intent would drop an existing brief", () => {
+    const withBrief = card("A", {
+      intentBrief: {
+        intent: "old",
+        acceptanceCriteria: [],
+        constraints: [],
+        nonGoals: [],
+        openDecisions: [],
+      },
+    });
+    expect(intentSaveError(withBrief, blank)).toBe("Intent is required before saving a brief.");
+  });
+
+  it("refuses when the other intent fields were typed but the intent is blank", () => {
+    expect(intentSaveError(card("A"), { ...blank, constraints: "no new deps" })).toBe(
+      "Intent is required before saving a brief.",
+    );
+  });
+
+  it("refuses on a Ready card even with nothing else filled in", () => {
+    expect(intentSaveError(card("A", { state: "Ready" }), blank)).toBe(
+      "Intent is required before saving a brief.",
+    );
+  });
+
+  it("saves once the intent itself is filled in", () => {
+    const ready = card("A", { state: "Ready" });
+    expect(intentSaveError(ready, { ...blank, intent: "ship it" })).toBeNull();
   });
 });

@@ -11,6 +11,7 @@ import {
   detailDraftFromCard,
   intentBriefFromDraft,
   intentDraftFromCard,
+  intentSaveError,
 } from "./agentBoardModel";
 import { Button } from "../ui/button";
 import {
@@ -86,18 +87,12 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
 
   const handleSave = () => {
     if (!card || !detailDraft || !intentDraft) return;
-    const intentBrief = intentBriefFromDraft(intentDraft);
-    // A blank intent drops the whole brief, so refuse rather than silently
-    // discard an existing brief or the other intent fields the user typed.
-    if (
-      !intentBrief &&
-      (card.state === "Ready" ||
-        card.intentBrief ||
-        Object.values(intentDraft).some((value) => value.trim()))
-    ) {
-      setError("Intent is required before saving a brief.");
+    const blocked = intentSaveError(card, intentDraft);
+    if (blocked) {
+      setError(blocked);
       return;
     }
+    const intentBrief = intentBriefFromDraft(intentDraft);
     const next = cardWithDetailDraft(card, detailDraft);
     onSave((intentBrief ? { ...next, intentBrief } : next) as AgentBoardCard);
     onOpenChange(false);
@@ -316,10 +311,13 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
                   />
                 </LabeledField>
               </div>
-
-              {error ? <p className="text-[12px] text-rose-300">{error}</p> : null}
             </DialogPanel>
             <DialogFooter>
+              {/* In the footer, not the panel: the panel scrolls, so an error
+                  rendered next to the field would sit off-screen. */}
+              {error ? (
+                <p className="text-[12px] text-rose-300 sm:mr-auto sm:self-center">{error}</p>
+              ) : null}
               {card.state === "Ready" ? (
                 <Button variant="secondary" onClick={() => onRunCard(card)} disabled={busy}>
                   <PlayIcon className="size-3.5" />
