@@ -1,4 +1,3 @@
-import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { useLocalStorage } from "./hooks/useLocalStorage";
@@ -25,35 +24,11 @@ export function usePlanningFeaturesDisabled(): readonly [disabled: boolean, togg
 
 /**
  * Where the Planning route has to send the user, or `undefined` to stay put.
- * Only someone standing on Planning while the switch is pulled gets moved:
- * flipping the switch from a chat route must not yank them anywhere.
+ * Only the Planning route asks, so a chat route never gets yanked anywhere.
  */
 export function resolvePlanningDestination<T>(input: {
   readonly disabled: boolean;
-  readonly current: "planning" | "chat";
   readonly fallback: T;
 }): T | undefined {
-  return input.disabled && input.current === "planning" ? input.fallback : undefined;
-}
-
-/**
- * The project's most recently updated live thread, used as the Planning exit
- * target. Archived threads are not somewhere we can drop a user.
- */
-export function selectMostRecentThreadRef(
-  threads: ReadonlyArray<{
-    readonly id: ThreadId;
-    readonly environmentId: EnvironmentId;
-    readonly updatedAt: string;
-    readonly archivedAt: string | null;
-  }>,
-): ScopedThreadRef | null {
-  let latest: (typeof threads)[number] | null = null;
-  for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
-    if (latest === null || thread.updatedAt > latest.updatedAt) {
-      latest = thread;
-    }
-  }
-  return latest === null ? null : { environmentId: latest.environmentId, threadId: latest.id };
+  return input.disabled ? input.fallback : undefined;
 }
