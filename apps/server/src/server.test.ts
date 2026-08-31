@@ -151,6 +151,8 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as AgentBoardFileSystem from "./agentBoard/AgentBoardFileSystem.ts";
+import { AgentBoardRunnerLive } from "./agentBoard/AgentBoardRunner.ts";
+import { WorkflowFileLive } from "./agentBoard/WorkflowFile.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
@@ -747,6 +749,10 @@ const buildAppUnderTest = (options?: {
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
+          // The real runner; every mock provided below (orchestration engine,
+          // projection snapshots, git workflow, board file system) satisfies
+          // its dependencies.
+          AgentBoardRunnerLive.pipe(Layer.provide(WorkflowFileLive)),
           Layer.mock(Keybindings.Keybindings)({
             loadConfigState: Effect.succeed({
               keybindings: [],
@@ -6891,6 +6897,104 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (readOnly.denied._tag === "EnvironmentAuthorizationError") {
         assert.equal(readOnly.denied.requiredScope, "orchestration:operate");
       }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("routes websocket rpc agent board runner enable and status", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-board-runner-" });
+      // Status has to report the project's own workflow, not the built-in defaults.
+      yield* fs.writeFileString(
+        path.join(workspaceRoot, "WORKFLOW.md"),
+        "---\nagent:\n  maxConcurrentAgents: 2\n---\n\n# Workflow\n",
+      );
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const { loaded, saved, status } = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const loaded = yield* client[WS_METHODS.projectsLoadAgentBoard]({
+              cwd: workspaceRoot,
+              createIfMissing: true,
+            });
+            const saved = yield* client[WS_METHODS.projectsSetAgentBoardRunnerEnabled]({
+              cwd: workspaceRoot,
+              enabled: true,
+            });
+            const status = yield* client[WS_METHODS.projectsGetAgentBoardRunnerStatus]({
+              cwd: workspaceRoot,
+            });
+            return { loaded, saved, status };
+          }),
+        ),
+      );
+
+      assert.equal(loaded.board.runner.enabled, false);
+      assert.equal(saved.board.runner.enabled, true);
+      // The toggle only flips `runner.enabled`; the rest of the board survives.
+      assert.equal(saved.board.runner.maxConcurrentCards, loaded.board.runner.maxConcurrentCards);
+      assert.equal(status.enabled, true);
+      assert.equal(status.workflowSource, "workflow-md");
+      assert.deepEqual([...status.activeCardIds], []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("refuses to claim an agent board card the runner already owns", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-board-owned-" });
+      // `Diagnosing` is claimable by the file primitive so the runner can
+      // re-launch a failed card; a client must not race it onto the workspace.
+      const diagnosingCard = {
+        id: AgentBoardCardId.make("card-owned"),
+        title: "Repair in flight",
+        priority: 1,
+        dependencies: [],
+        parallelism: { safe: "false" as const, conflictsWith: [], allowedWriteScopes: [] },
+        runtime: { attemptCount: 1, turnCount: 1, repairCycleCount: 1, reviewFindings: [] },
+        state: "Diagnosing" as const,
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      };
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const { denied, reloaded } = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const loaded = yield* client[WS_METHODS.projectsLoadAgentBoard]({
+              cwd: workspaceRoot,
+              createIfMissing: true,
+            });
+            yield* client[WS_METHODS.projectsSaveAgentBoard]({
+              cwd: workspaceRoot,
+              board: { ...loaded.board, cards: [diagnosingCard] },
+            });
+            const denied = yield* Effect.flip(
+              client[WS_METHODS.projectsClaimAgentBoardCard]({
+                cwd: workspaceRoot,
+                cardId: diagnosingCard.id,
+              }),
+            );
+            const reloaded = yield* client[WS_METHODS.projectsLoadAgentBoard]({
+              cwd: workspaceRoot,
+            });
+            return { denied, reloaded };
+          }),
+        ),
+      );
+
+      assert.equal(denied._tag, "AgentBoardFileError");
+      assert.include(denied.message, "Diagnosing");
+      // The refusal happens before the claim, so nothing was mutated.
+      assert.equal(reloaded.board.cards[0]?.state, "Diagnosing");
+      assert.equal(reloaded.board.cards[0]?.runtime.attemptCount, 1);
+      assert.isUndefined(reloaded.board.cards[0]?.runtime.workspacePath);
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 

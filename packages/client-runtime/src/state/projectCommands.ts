@@ -85,6 +85,12 @@ export function createProjectEnvironmentAtoms<R, E>(
       staleTimeMs: 5_000,
       idleTtlMs: 5 * 60_000,
     }),
+    getAgentBoardRunnerStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:agent-board-runner-status",
+      tag: WS_METHODS.projectsGetAgentBoardRunnerStatus,
+      staleTimeMs: 2_000,
+      idleTtlMs: 60_000,
+    }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>
       optimisticFileFamily(optimisticProjectFileKey(target)),
     create: createEnvironmentCommand(runtime, {
@@ -124,6 +130,12 @@ export function createProjectEnvironmentAtoms<R, E>(
     claimAgentBoardCard: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:claim-agent-board-card",
       tag: WS_METHODS.projectsClaimAgentBoardCard,
+      scheduler: fileScheduler,
+      concurrency: projectConcurrency,
+    }),
+    setAgentBoardRunnerEnabled: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:set-agent-board-runner-enabled",
+      tag: WS_METHODS.projectsSetAgentBoardRunnerEnabled,
       scheduler: fileScheduler,
       concurrency: projectConcurrency,
     }),

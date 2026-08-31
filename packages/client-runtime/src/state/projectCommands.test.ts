@@ -142,6 +142,10 @@ describe("createProjectEnvironmentAtoms agent board", () => {
                 workspacePath: ".t3/workspaces/card-1",
               }),
             ),
+          [WS_METHODS.projectsSetAgentBoardRunnerEnabled]: (input: { readonly cwd: string }) =>
+            inFlight(input.cwd).pipe(
+              Effect.as({ board, relativePath: ".t3/agent-board.json" as const }),
+            ),
         } as unknown as WsRpcProtocolClient;
         const { projects, registry } = yield* makeProjectAtoms(client);
 
@@ -153,6 +157,10 @@ describe("createProjectEnvironmentAtoms agent board", () => {
           environmentId,
           input: { cwd: "/repo", cardId: AgentBoardCardId.make("card-1") },
         });
+        const toggle = projects.setAgentBoardRunnerEnabled.run(registry, {
+          environmentId,
+          input: { cwd: "/repo", enabled: true },
+        });
         const otherSave = projects.saveAgentBoard.run(registry, {
           environmentId,
           input: { cwd: "/other", board },
@@ -163,9 +171,9 @@ describe("createProjectEnvironmentAtoms agent board", () => {
         expect(started.filter((cwd) => cwd === "/repo")).toEqual(["/repo"]);
 
         gate.openUnsafe();
-        yield* Effect.promise(() => Promise.all([save, claim, otherSave]));
+        yield* Effect.promise(() => Promise.all([save, claim, toggle, otherSave]));
 
-        expect(started.filter((cwd) => cwd === "/repo")).toEqual(["/repo", "/repo"]);
+        expect(started.filter((cwd) => cwd === "/repo")).toEqual(["/repo", "/repo", "/repo"]);
       }),
     ),
   );

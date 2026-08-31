@@ -79,6 +79,8 @@ import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/uns
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as AgentBoardFileSystem from "./agentBoard/AgentBoardFileSystem.ts";
+import { AgentBoardRunner } from "./agentBoard/AgentBoardRunner.ts";
+import { RUNNER_OWNED_STATES } from "./agentBoard/boardScheduler.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
@@ -573,6 +575,8 @@ const makeWsRpcLayer = (
         return true;
       });
       const agentBoard = yield* AgentBoardFileSystem.AgentBoardFileSystem;
+      const agentBoardRunner = yield* AgentBoardRunner;
+      const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
@@ -2344,22 +2348,55 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.projectsSaveAgentBoard, agentBoard.save(input), {
             "rpc.aggregate": "workspace",
           }),
+        // `AgentBoardFileSystem.claim` also accepts `Diagnosing` so the runner
+        // can re-launch a card whose first attempt died before it had a thread.
+        // A client must never take that path: a manual claim on a card the
+        // runner owns would start a second agent on the same workspace.
         [WS_METHODS.projectsClaimAgentBoardCard]: (input) =>
-          observeRpcEffect(WS_METHODS.projectsClaimAgentBoardCard, agentBoard.claim(input), {
-            "rpc.aggregate": "workspace",
-          }),
-        // The board runner lands in a later task; the contract already declares
-        // these methods, so the handler object has to stay exhaustive.
-        [WS_METHODS.projectsGetAgentBoardRunnerStatus]: () =>
           observeRpcEffect(
-            WS_METHODS.projectsGetAgentBoardRunnerStatus,
-            Effect.fail(new AgentBoardFileError({ message: "Runner not available yet" })),
+            WS_METHODS.projectsClaimAgentBoardCard,
+            agentBoard.load({ cwd: input.cwd }).pipe(
+              Effect.flatMap(({ board }) => {
+                const card = board.cards.find((candidate) => candidate.id === input.cardId);
+                return card !== undefined && RUNNER_OWNED_STATES.has(card.state)
+                  ? Effect.fail(
+                      new AgentBoardFileError({
+                        message: `The board runner owns ${input.cardId} (${card.state}); it cannot be claimed manually.`,
+                      }),
+                    )
+                  : agentBoard.claim(input);
+              }),
+            ),
             { "rpc.aggregate": "workspace" },
           ),
-        [WS_METHODS.projectsSetAgentBoardRunnerEnabled]: () =>
+        [WS_METHODS.projectsGetAgentBoardRunnerStatus]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsGetAgentBoardRunnerStatus,
+            workspacePaths.normalizeWorkspaceRoot(input.cwd).pipe(
+              Effect.flatMap((root) => agentBoardRunner.status(root)),
+              Effect.mapError(
+                (cause) =>
+                  new AgentBoardFileError({ message: "Could not read runner status.", cause }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsSetAgentBoardRunnerEnabled]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSetAgentBoardRunnerEnabled,
-            Effect.fail(new AgentBoardFileError({ message: "Runner not available yet" })),
+            Effect.gen(function* () {
+              const loaded = yield* agentBoard.load({ cwd: input.cwd });
+              const saved = yield* agentBoard.save({
+                cwd: input.cwd,
+                board: {
+                  ...loaded.board,
+                  runner: { ...loaded.board.runner, enabled: input.enabled },
+                },
+              });
+              // Without this the board sits idle until the next poll tick.
+              yield* agentBoardRunner.nudge(saved.board.projectRoot);
+              return saved;
+            }),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.shellOpenInEditor]: (input) =>

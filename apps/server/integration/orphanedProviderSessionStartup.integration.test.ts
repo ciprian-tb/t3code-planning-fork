@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { HttpServer } from "effect/unstable/http";
 
+import { AgentBoardRunner } from "../src/agentBoard/AgentBoardRunner.ts";
 import * as EnvironmentAuth from "../src/auth/EnvironmentAuth.ts";
 import * as ServiceLauncherClient from "../src/cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../src/config.ts";
@@ -77,6 +78,9 @@ const startupDependencies = Layer.mergeAll(
     start: () => Effect.void,
   }),
   Layer.succeed(ProviderSessionReaper.ProviderSessionReaper, {
+    start: () => Effect.void,
+  }),
+  Layer.mock(AgentBoardRunner)({
     start: () => Effect.void,
   }),
   ServerLifecycleEvents.layer,
