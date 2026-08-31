@@ -343,7 +343,8 @@ function AgentBoardPanelContent({
         onOpenChange={(open) => {
           if (!open) setOpenCardId(null);
         }}
-        onSave={(next) => editCard(next.id, () => next)}
+        // Keep the stamp `updateCard` applies; the draft was built pre-stamp.
+        onSave={(next) => editCard(next.id, (card) => ({ ...next, updatedAt: card.updatedAt }))}
         onMoveCard={(card, state) => moveCard(card.id, state)}
         onRunCard={runCard}
       />

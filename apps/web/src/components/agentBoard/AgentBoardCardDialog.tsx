@@ -74,20 +74,28 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
   const [intentDraft, setIntentDraft] = useState<IntentDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset the drafts during render when a different card is opened, so the
-  // dialog never shows the previous card's text for a frame.
-  if (card && card.id !== editedCardId) {
-    setEditedCardId(card.id);
-    setDetailDraft(detailDraftFromCard(card));
-    setIntentDraft(intentDraftFromCard(card));
+  // Reset the drafts during render whenever the open card changes — including
+  // closing, which lands on `null` — so the dialog never shows the previous
+  // card's text and reopening never resurrects abandoned edits.
+  if ((card?.id ?? null) !== editedCardId) {
+    setEditedCardId(card?.id ?? null);
+    setDetailDraft(card ? detailDraftFromCard(card) : null);
+    setIntentDraft(card ? intentDraftFromCard(card) : null);
     setError(null);
   }
 
   const handleSave = () => {
     if (!card || !detailDraft || !intentDraft) return;
     const intentBrief = intentBriefFromDraft(intentDraft);
-    if (card.state === "Ready" && !intentBrief) {
-      setError("Intent is required for a Ready card.");
+    // A blank intent drops the whole brief, so refuse rather than silently
+    // discard an existing brief or the other intent fields the user typed.
+    if (
+      !intentBrief &&
+      (card.state === "Ready" ||
+        card.intentBrief ||
+        Object.values(intentDraft).some((value) => value.trim()))
+    ) {
+      setError("Intent is required before saving a brief.");
       return;
     }
     const next = cardWithDetailDraft(card, detailDraft);

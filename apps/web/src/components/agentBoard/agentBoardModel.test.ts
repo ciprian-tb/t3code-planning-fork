@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildExecutionTree,
+  cardWithDetailDraft,
   cardWithPlanningField,
   cardWithState,
   detailDraftFromCard,
@@ -10,6 +11,7 @@ import {
   intentBriefFromDraft,
   intentDraftFromCard,
   newCardForState,
+  sortCardsForTable,
   updateCard,
 } from "./agentBoardModel";
 
@@ -141,6 +143,63 @@ describe("intent brief drafts", () => {
   });
 });
 
+describe("cardWithDetailDraft", () => {
+  const source = card("CARD-1", {
+    area: "Core",
+    slice: "Auth",
+    slicePlanPath: "docs/plan.md",
+    parallelism: { safe: "true", reason: "Isolated", conflictsWith: [], allowedWriteScopes: [] },
+    intentBrief: {
+      intent: "Ship it",
+      acceptanceCriteria: [],
+      constraints: [],
+      nonGoals: [],
+      openDecisions: [],
+    },
+  });
+
+  it("drops optional keys the draft blanked out", () => {
+    const next = cardWithDetailDraft(source, {
+      ...detailDraftFromCard(source),
+      area: "  ",
+      slicePlanPath: "",
+      parallelismReason: "   ",
+    });
+    expect("area" in next).toBe(false);
+    expect("slicePlanPath" in next).toBe(false);
+    expect("reason" in next.parallelism).toBe(false);
+    expect(next.slice).toBe("Auth");
+    expect(source.area).toBe("Core");
+  });
+
+  it("splits list fields, keeps the old title when blanked, and leaves the brief alone", () => {
+    const next = cardWithDetailDraft(source, {
+      ...detailDraftFromCard(source),
+      title: "   ",
+      dependencies: "CARD-2\n\n  CARD-3  ",
+      allowedWriteScopes: "apps/web\napps/server",
+    });
+    expect(next.title).toBe(source.title);
+    expect(next.dependencies).toEqual(["CARD-2", "CARD-3"]);
+    expect(next.parallelism.allowedWriteScopes).toEqual(["apps/web", "apps/server"]);
+    // The dialog depends on this: a detail save carries the existing brief over.
+    expect(next.intentBrief?.intent).toBe("Ship it");
+  });
+});
+
+describe("sortCardsForTable", () => {
+  it("orders by area, then slice, then priority, then title", () => {
+    const sorted = sortCardsForTable([
+      card("Y"),
+      card("N", { area: "Core", slice: "Auth", priority: 2 }),
+      card("A", { area: "Core", slice: "Auth", priority: 2 }),
+      card("M", { area: "Core", slice: "Auth", priority: 1 }),
+      card("Z", { area: "Core", slice: "Api", priority: 5 }),
+    ]);
+    expect(sorted.map((entry) => entry.id)).toEqual(["Z", "M", "A", "N", "Y"]);
+  });
+});
+
 describe("newCardForState", () => {
   it("builds a decodable Ready card with an intent brief", () => {
     const created = newCardForState("Wire the runner", "Ready", TIMESTAMP);
@@ -152,14 +211,16 @@ describe("newCardForState", () => {
 
 describe("groupDependencyTreeCards", () => {
   it("groups by area and slice and sorts cards by priority", () => {
+    // Titles deliberately disagree with priority order, so a dropped priority
+    // tiebreak cannot pass by falling through to the title comparison.
     const groups = groupDependencyTreeCards([
-      card("B", { area: "Core", slice: "Auth", priority: 2 }),
-      card("A", { area: "Core", slice: "Auth", priority: 1 }),
+      card("A", { area: "Core", slice: "Auth", priority: 2 }),
+      card("B", { area: "Core", slice: "Auth", priority: 1 }),
       card("C", { slice: "Auth" }),
     ]);
     expect(groups).toHaveLength(2);
     expect(groups[0]?.area).toBe("Core");
-    expect(groups[0]?.cards.map((entry) => entry.id)).toEqual(["A", "B"]);
+    expect(groups[0]?.cards.map((entry) => entry.id)).toEqual(["B", "A"]);
     expect(groups[1]?.area).toBe("Unassigned");
   });
 });
@@ -192,19 +253,33 @@ describe("buildExecutionTree", () => {
     ]);
   });
 
-  it("flags dependencies that are not on the board", () => {
+  it("flags only the dependencies that are not on the board", () => {
     const rows = buildExecutionTree(
-      board([card("A", { area: "Core", dependencies: ["GHOST"] as AgentBoardCardId[] })]),
+      board([
+        card("A", { area: "Core", dependencies: ["B", "GHOST"] as AgentBoardCardId[] }),
+        card("B", { area: "Core" }),
+      ]),
     );
     const row = rows.find((entry) => entry.kind === "card" && entry.cardId === "A");
     expect(row?.kind === "card" && row.missingDependencyIds).toEqual(["GHOST"]);
   });
 
   it("keeps unconnected cards in their own section", () => {
-    const rows = buildExecutionTree(board([card("A"), card("B", { area: "Future Scope" })]));
+    const rows = buildExecutionTree(
+      board([
+        card("A"),
+        card("B", { area: "Future Scope" }),
+        card("C", { area: "Core", dependencies: [] }),
+      ]),
+    );
     expect(rows.find((row) => row.kind === "card" && row.cardId === "A")?.section).toBe(
       "independent",
     );
     expect(rows.find((row) => row.kind === "card" && row.cardId === "B")?.section).toBe("future");
+    // An area-tagged card with no links is detached, not a Foundations tier.
+    expect(rows.find((row) => row.kind === "card" && row.cardId === "C")?.section).toBe(
+      "independent",
+    );
+    expect(rows.some((row) => row.kind === "tier")).toBe(false);
   });
 });
