@@ -12,6 +12,7 @@ import {
   type AgentBoardRunnerStatus,
   type AgentBoardState,
   type AgentBoardWorkflowSource,
+  type RuntimeSessionId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -339,6 +340,75 @@ export function cardWithState(
           },
         }
       : {}),
+    updatedAt: timestamp,
+  } as AgentBoardCard;
+}
+
+/**
+ * Runtime fields that describe a moment rather than the card. Every launch
+ * transition drops them first and re-states only what is still true, so a stale
+ * error or retry stamp cannot survive a successful relaunch.
+ *
+ * Mirrors `transition` in `apps/server/src/agentBoard/boardScheduler.ts`: the
+ * manual Run button and the runner have to leave a card in the same shape.
+ */
+function runtimeWithoutTransientFields(card: AgentBoardCard, timestamp: string) {
+  const {
+    currentError: _currentError,
+    currentDecisionQuestion: _currentDecisionQuestion,
+    nextRetryAt: _nextRetryAt,
+    phase: _phase,
+    ...rest
+  } = card.runtime;
+  return { ...rest, lastHeartbeatAt: timestamp };
+}
+
+/**
+ * The claim leaves a card `Running` with a reserved workspace and no thread.
+ * This records the thread that owns it, which is what stops the runner from
+ * treating the card as ownerless and re-claiming the same worktree.
+ */
+export function cardWithLaunchedRun(
+  card: AgentBoardCard,
+  run: { readonly threadId: RuntimeSessionId; readonly branchName?: string },
+  timestamp: string,
+): AgentBoardCard {
+  const runtime = runtimeWithoutTransientFields(card, timestamp);
+  return {
+    ...card,
+    state: "Running",
+    runtime: {
+      ...runtime,
+      phase: "implementing",
+      implementationRunId: run.threadId,
+      turnCount: runtime.turnCount + 1,
+      ...(run.branchName ? { branchName: run.branchName } : {}),
+    },
+    updatedAt: timestamp,
+  } as AgentBoardCard;
+}
+
+/**
+ * A launch that died after the claim. `Diagnosing` is the runner's retry state,
+ * and a `threadId` is carried through whenever one already exists so the retry
+ * continues that thread instead of re-claiming the workspace under it.
+ */
+export function cardWithLaunchFailure(
+  card: AgentBoardCard,
+  failure: { readonly error: string; readonly threadId?: RuntimeSessionId },
+  timestamp: string,
+): AgentBoardCard {
+  return {
+    ...card,
+    state: "Diagnosing",
+    runtime: {
+      ...runtimeWithoutTransientFields(card, timestamp),
+      phase: "repairing",
+      // Board strings are `TrimmedNonEmptyString`; a blank message would make
+      // the save that reports the failure fail too.
+      currentError: failure.error.trim() || "Could not launch this card.",
+      ...(failure.threadId ? { implementationRunId: failure.threadId } : {}),
+    },
     updatedAt: timestamp,
   } as AgentBoardCard;
 }

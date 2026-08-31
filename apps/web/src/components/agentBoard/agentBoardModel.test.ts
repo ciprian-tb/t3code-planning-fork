@@ -1,10 +1,13 @@
 import type { AgentBoardCard, AgentBoardCardId, AgentBoardFile } from "@t3tools/contracts";
+import { RuntimeSessionId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildExecutionTree,
   cardRuntimeSummary,
   cardWithDetailDraft,
+  cardWithLaunchedRun,
+  cardWithLaunchFailure,
   cardWithPlanningField,
   cardWithState,
   detailDraftFromCard,
@@ -439,5 +442,123 @@ describe("runnerStatusLine", () => {
     expect(
       runnerStatusLine({ enabled: false, workflowSource: "defaults", activeCardIds: [] }, NOW),
     ).toBe("workflow: defaults  ·  active: 0  ·  last tick never");
+  });
+});
+
+describe("cardWithLaunchedRun", () => {
+  const RUN_ID = RuntimeSessionId.make("thread-abc");
+  const LAUNCHED_AT = "2026-02-02T00:00:00.000Z";
+  // What `AgentBoardFileSystem.claim` leaves behind: Running, workspace
+  // reserved, no thread recorded yet.
+  const claimed = () =>
+    card("CARD-1", {
+      state: "Running",
+      runtime: {
+        attemptCount: 1,
+        turnCount: 0,
+        repairCycleCount: 0,
+        reviewFindings: [],
+        workspacePath: ".t3/workspaces/CARD-1",
+      },
+    });
+
+  it("records the thread that owns the claimed workspace", () => {
+    const launched = cardWithLaunchedRun(claimed(), { threadId: RUN_ID }, LAUNCHED_AT);
+    expect(launched.state).toBe("Running");
+    expect(launched.runtime.implementationRunId).toBe(RUN_ID);
+    expect(launched.runtime.phase).toBe("implementing");
+  });
+
+  it("keeps the workspace the claim reserved and stores the launch branch", () => {
+    const launched = cardWithLaunchedRun(
+      claimed(),
+      { threadId: RUN_ID, branchName: "agent-board/CARD-1" },
+      LAUNCHED_AT,
+    );
+    expect(launched.runtime.workspacePath).toBe(".t3/workspaces/CARD-1");
+    expect(launched.runtime.branchName).toBe("agent-board/CARD-1");
+  });
+
+  it("counts the turn the launch is about to start", () => {
+    expect(
+      cardWithLaunchedRun(claimed(), { threadId: RUN_ID }, LAUNCHED_AT).runtime.turnCount,
+    ).toBe(1);
+  });
+
+  it("drops the moment-in-time runtime fields a previous failure left behind", () => {
+    const retried = card("CARD-1", {
+      state: "Running",
+      runtime: {
+        attemptCount: 2,
+        turnCount: 1,
+        repairCycleCount: 1,
+        reviewFindings: [],
+        phase: "repairing",
+        currentError: "worktree add failed",
+        currentDecisionQuestion: "which branch?",
+        nextRetryAt: "2026-02-01T00:00:00.000Z",
+      },
+    });
+    const launched = cardWithLaunchedRun(retried, { threadId: RUN_ID }, LAUNCHED_AT);
+    expect(launched.runtime.currentError).toBeUndefined();
+    expect(launched.runtime.currentDecisionQuestion).toBeUndefined();
+    expect(launched.runtime.nextRetryAt).toBeUndefined();
+    expect(launched.runtime.attemptCount).toBe(2);
+  });
+
+  it("beats the heartbeat so the runner does not read the card as abandoned", () => {
+    const launched = cardWithLaunchedRun(claimed(), { threadId: RUN_ID }, LAUNCHED_AT);
+    expect(launched.runtime.lastHeartbeatAt).toBe(LAUNCHED_AT);
+    expect(launched.updatedAt).toBe(LAUNCHED_AT);
+  });
+});
+
+describe("cardWithLaunchFailure", () => {
+  const RUN_ID = RuntimeSessionId.make("thread-abc");
+  const FAILED_AT = "2026-02-02T00:00:00.000Z";
+  const running = () =>
+    card("CARD-1", {
+      state: "Running",
+      runtime: {
+        attemptCount: 1,
+        turnCount: 0,
+        repairCycleCount: 0,
+        reviewFindings: [],
+        workspacePath: ".t3/workspaces/CARD-1",
+      },
+    });
+
+  it("moves the card out of Running so it is never left claimed with no owner", () => {
+    const parked = cardWithLaunchFailure(running(), { error: "worktree add failed" }, FAILED_AT);
+    expect(parked.state).toBe("Diagnosing");
+    expect(parked.runtime.phase).toBe("repairing");
+    expect(parked.runtime.currentError).toBe("worktree add failed");
+  });
+
+  /**
+   * The runner re-launches a `Diagnosing` card that has no `implementationRunId`,
+   * and re-launching re-claims this card's workspace — a second agent in the
+   * worktree this run already reserved. Once a thread exists it has to survive
+   * the failure, so the runner continues that thread instead.
+   */
+  it("keeps the launched thread id so a relaunch cannot re-claim the same workspace", () => {
+    const parked = cardWithLaunchFailure(
+      running(),
+      { error: "board save failed", threadId: RUN_ID },
+      FAILED_AT,
+    );
+    expect(parked.runtime.implementationRunId).toBe(RUN_ID);
+  });
+
+  it("falls back to a usable message so the board save cannot reject a blank error", () => {
+    expect(cardWithLaunchFailure(running(), { error: "   " }, FAILED_AT).runtime.currentError).toBe(
+      "Could not launch this card.",
+    );
+  });
+
+  it("keeps the reserved workspace so the retry lands in the same worktree", () => {
+    const parked = cardWithLaunchFailure(running(), { error: "boom" }, FAILED_AT);
+    expect(parked.runtime.workspacePath).toBe(".t3/workspaces/CARD-1");
+    expect(parked.runtime.lastHeartbeatAt).toBe(FAILED_AT);
   });
 });

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo } from "react";
 
 import { AgentBoardPanel } from "../components/agentBoard/AgentBoardPanel";
 import { AgentBoardRunnerControls } from "../components/agentBoard/AgentBoardRunnerControls";
+import { useRunAgentBoardCard } from "../components/agentBoard/useRunAgentBoardCard";
 import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
 import { useClientSettings } from "../hooks/useSettings";
@@ -42,6 +43,7 @@ function PlanningRouteView() {
     });
   }, [projectRef.environmentId, setRunnerEnabled, workspaceRoot]);
   const [planningDisabled, togglePlanningDisabled] = usePlanningFeaturesDisabled(stopRunner);
+  const runClaimedCard = useRunAgentBoardCard(projectRef, workspaceRoot);
 
   // Landing spot when there is no history entry to return to (direct URL, or a
   // forced exit): the project's own most recent thread, ranked exactly as the
@@ -123,7 +125,11 @@ function PlanningRouteView() {
           switch is read synchronously (useSyncExternalStore), so not rendering
           the panel keeps it unmounted from the very first commit. */}
       {planningDisabled ? null : (
-        <AgentBoardPanel environmentId={projectRef.environmentId} workspaceRoot={workspaceRoot} />
+        <AgentBoardPanel
+          environmentId={projectRef.environmentId}
+          workspaceRoot={workspaceRoot}
+          onRunClaimedCard={runClaimedCard}
+        />
       )}
     </SidebarInset>
   );

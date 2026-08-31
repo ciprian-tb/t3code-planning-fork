@@ -224,9 +224,11 @@ function AgentBoardPanelContent({
           setSelectedCardId(result.value.card.id);
           toastManager.add({
             type: "success",
-            title: onRunClaimedCard ? "Agent run started" : "Workspace claimed",
+            // The launcher opens a worktree thread and loads the card's prompt
+            // into its composer; the turn starts when the user sends it.
+            title: onRunClaimedCard ? "Card handed to a thread" : "Workspace claimed",
             description: onRunClaimedCard
-              ? `${result.value.card.title} is running.`
+              ? `${result.value.card.title} is ready to send in its own worktree.`
               : result.value.workspacePath,
           });
         } catch (runError) {
