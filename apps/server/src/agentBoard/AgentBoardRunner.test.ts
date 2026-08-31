@@ -306,6 +306,36 @@ describe("AgentBoardRunner", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("a pre-launch failure re-launches when the retry falls due", () =>
+    Effect.gen(function* () {
+      const s = yield* setup();
+      yield* s.harness.failNextProjectLookup;
+      yield* s.runner.tick(s.root);
+      expect((yield* s.card()).state).toBe("Diagnosing");
+      // The card was never launched, so the retry has to claim it, not continue it.
+      yield* TestClock.adjust(Duration.seconds(5));
+      yield* s.runner.tick(s.root);
+      const card = yield* s.card();
+      expect(card.state).toBe("Running");
+      expect(yield* s.threadIds()).toHaveLength(1);
+      expect(card.runtime.implementationRunId).toBe((yield* s.threadIds())[0]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a failed worker shell read backs the card off instead of parking it", () =>
+    Effect.gen(function* () {
+      const s = yield* setup();
+      yield* s.runner.tick(s.root);
+      expect((yield* s.card()).state).toBe("Running");
+      yield* s.harness.failNextThreadShellLookup;
+      yield* s.runner.tick(s.root);
+      const card = yield* s.card();
+      expect(card.state).toBe("Diagnosing");
+      expect(card.runtime.currentError).toContain("thread shell unavailable");
+      expect(card.runtime.currentDecisionQuestion).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("restart recovery re-tracks a Running card from board fields", () =>
     Effect.gen(function* () {
       const s = yield* setup();

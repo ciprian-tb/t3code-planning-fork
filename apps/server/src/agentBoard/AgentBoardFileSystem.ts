@@ -45,7 +45,7 @@ export class AgentBoardFileSystem extends Context.Service<
     readonly save: (
       input: AgentBoardSaveInput,
     ) => Effect.Effect<AgentBoardSaveResult, AgentBoardFileError>;
-    /** Move a `Ready` card to `Running` and reserve its workspace directory. */
+    /** Move a `Ready` (or re-launched `Diagnosing`) card to `Running` and reserve its workspace. */
     readonly claim: (
       input: AgentBoardClaimInput,
     ) => Effect.Effect<AgentBoardClaimResult, AgentBoardFileError>;
@@ -248,9 +248,11 @@ export const make = Effect.gen(function* () {
         if (!card) {
           return yield* boardError(`Agent board card not found: ${input.cardId}`);
         }
-        if (card.state !== "Ready") {
+        // `Diagnosing` is the runner re-launching a card whose first launch
+        // failed before it had a thread; it needs the same workspace reservation.
+        if (card.state !== "Ready" && card.state !== "Diagnosing") {
           return yield* boardError(
-            `Only Ready cards can be claimed. ${input.cardId} is ${card.state}.`,
+            `Only Ready or Diagnosing cards can be claimed. ${input.cardId} is ${card.state}.`,
           );
         }
 

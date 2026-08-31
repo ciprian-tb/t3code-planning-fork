@@ -45,7 +45,6 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -729,12 +728,12 @@ export const AgentBoardRunnerLive = Layer.effect(
           state.tracked.set(card.id, tracked);
 
           // A failed read is transient; only a `None` means the thread is gone.
-          const lookup = yield* Effect.exit(snapshot.getThreadShellById(threadId));
-          if (Exit.isFailure(lookup)) {
-            yield* retryLater(state, root, card.id, Cause.pretty(lookup.cause));
-            continue;
-          }
-          const shell = Option.getOrUndefined(lookup.value);
+          // `undefined` is the retried case: `Option.none()` is never undefined.
+          const lookup = yield* catchNonInterrupt(snapshot.getThreadShellById(threadId), (cause) =>
+            retryLater(state, root, card.id, Cause.pretty(cause)).pipe(Effect.as(undefined)),
+          );
+          if (lookup === undefined) continue;
+          const shell = Option.getOrUndefined(lookup);
           if (shell === undefined) {
             yield* needsDecision(state, root, card.id, `Worker thread ${runId} no longer exists.`);
             continue;
@@ -764,6 +763,12 @@ export const AgentBoardRunnerLive = Layer.effect(
         for (const card of board.cards) {
           if (card.state !== "Diagnosing" || state.tracked.has(card.id)) continue;
           if (card.runtime.nextRetryAt !== undefined && card.runtime.nextRetryAt > now) continue;
+          // A card that failed before its thread existed has nothing to
+          // continue; re-launch it (plan §8) instead of parking it.
+          if (card.runtime.implementationRunId === undefined) {
+            yield* launch(state, root, card.id);
+            continue;
+          }
           const findings = card.runtime.reviewFindings;
           yield* continueCard(
             state,

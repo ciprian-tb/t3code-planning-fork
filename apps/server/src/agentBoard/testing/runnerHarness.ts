@@ -45,6 +45,8 @@ export interface Harness {
   readonly project: OrchestrationProject;
   /** Make the next `getActiveProjectByWorkspaceRoot` fail, as a flaky read would. */
   readonly failNextProjectLookup: Effect.Effect<void>;
+  /** Make the next `getThreadShellById` fail, as a flaky read would. */
+  readonly failNextThreadShellLookup: Effect.Effect<void>;
   /** Simulate a provider turn finishing with the given assistant text (or an error). */
   readonly finishTurn: (
     threadId: ThreadId,
@@ -64,6 +66,7 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
     const events = yield* PubSub.unbounded<OrchestrationEvent>();
     const sequence = yield* Ref.make(0);
     const failProjectLookup = yield* Ref.make(false);
+    const failThreadShellLookup = yield* Ref.make(false);
 
     const session = (
       threadId: ThreadId,
@@ -186,8 +189,19 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
           ),
         ),
       getThreadShellById: (threadId: ThreadId) =>
-        Ref.get(threads).pipe(
-          Effect.map((map) => Option.map(Option.fromNullishOr(map.get(threadId)), shellOf)),
+        Ref.getAndSet(failThreadShellLookup, false).pipe(
+          Effect.flatMap((shouldFail) =>
+            shouldFail
+              ? Effect.fail(
+                  new PersistenceSqlError({
+                    operation: "getThreadShellById",
+                    detail: "thread shell unavailable",
+                  }),
+                )
+              : Ref.get(threads).pipe(
+                  Effect.map((map) => Option.map(Option.fromNullishOr(map.get(threadId)), shellOf)),
+                ),
+          ),
         ),
       getThreadDetailById: (threadId: ThreadId) =>
         Ref.get(threads).pipe(Effect.map((map) => Option.fromNullishOr(map.get(threadId)))),
@@ -258,6 +272,7 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
       threads,
       project,
       failNextProjectLookup: Ref.set(failProjectLookup, true),
+      failNextThreadShellLookup: Ref.set(failThreadShellLookup, true),
       finishTurn,
       layer: Layer.mergeAll(
         Layer.succeed(OrchestrationEngineService, engine),
