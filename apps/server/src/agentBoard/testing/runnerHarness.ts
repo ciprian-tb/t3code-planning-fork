@@ -35,6 +35,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 
@@ -42,6 +43,8 @@ export interface Harness {
   readonly commands: Ref.Ref<ReadonlyArray<OrchestrationCommand>>;
   readonly threads: Ref.Ref<Map<ThreadId, OrchestrationThread>>;
   readonly project: OrchestrationProject;
+  /** Make the next `getActiveProjectByWorkspaceRoot` fail, as a flaky read would. */
+  readonly failNextProjectLookup: Effect.Effect<void>;
   /** Simulate a provider turn finishing with the given assistant text (or an error). */
   readonly finishTurn: (
     threadId: ThreadId,
@@ -60,6 +63,7 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
     const threads = yield* Ref.make(new Map<ThreadId, OrchestrationThread>());
     const events = yield* PubSub.unbounded<OrchestrationEvent>();
     const sequence = yield* Ref.make(0);
+    const failProjectLookup = yield* Ref.make(false);
 
     const session = (
       threadId: ThreadId,
@@ -167,8 +171,19 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
           ),
         ),
       getActiveProjectByWorkspaceRoot: (workspaceRoot: string) =>
-        Effect.succeed(
-          workspaceRoot === project.workspaceRoot ? Option.some(project) : Option.none(),
+        Ref.getAndSet(failProjectLookup, false).pipe(
+          Effect.flatMap((shouldFail) =>
+            shouldFail
+              ? Effect.fail(
+                  new PersistenceSqlError({
+                    operation: "getActiveProjectByWorkspaceRoot",
+                    detail: "projection unavailable",
+                  }),
+                )
+              : Effect.succeed(
+                  workspaceRoot === project.workspaceRoot ? Option.some(project) : Option.none(),
+                ),
+          ),
         ),
       getThreadShellById: (threadId: ThreadId) =>
         Ref.get(threads).pipe(
@@ -242,6 +257,7 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
       commands,
       threads,
       project,
+      failNextProjectLookup: Ref.set(failProjectLookup, true),
       finishTurn,
       layer: Layer.mergeAll(
         Layer.succeed(OrchestrationEngineService, engine),

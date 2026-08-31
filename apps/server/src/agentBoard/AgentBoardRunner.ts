@@ -26,7 +26,6 @@ import {
   type OrchestrationProject,
   type OrchestrationSession,
   type OrchestrationSessionStatus,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import {
   buildContinuationPrompt,
@@ -46,6 +45,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -335,11 +335,15 @@ export const AgentBoardRunnerLive = Layer.effect(
         });
       });
 
-    /** The project row plus its default model, or `undefined` when unusable. */
+    /**
+     * The project row plus its default model, or `undefined` when the project
+     * is genuinely absent or has no model. A *failed* query is left in the
+     * error channel on purpose: callers wrap this in `orRetryLater`, so a flaky
+     * read backs off instead of parking the card on a false "no model".
+     */
     const projectContext = (root: string) =>
       snapshot.getActiveProjectByWorkspaceRoot(root).pipe(
         Effect.map(Option.getOrUndefined),
-        Effect.orElseSucceed(() => undefined),
         Effect.map((project) =>
           project === undefined || project.defaultModelSelection === null
             ? undefined
@@ -515,7 +519,10 @@ export const AgentBoardRunnerLive = Layer.effect(
         state.tracked.set(card.id, { threadId, role: "review" });
       }).pipe(orRetryLater(state, root, card.id));
 
-    /** A review turn that ended with no result block gets exactly one nudge. */
+    /**
+     * A review turn that ended with no result block is nudged to produce one.
+     * Repeats on every result-less settle; `max_turns` is the only bound.
+     */
     const nudgeReview = (state: ProjectState, root: string, card: AgentBoardCard) =>
       Effect.gen(function* () {
         const context = yield* projectContext(root);
@@ -721,11 +728,13 @@ export const AgentBoardRunnerLive = Layer.effect(
           const tracked: Tracked = { threadId, role };
           state.tracked.set(card.id, tracked);
 
-          const shell = Option.getOrUndefined(
-            yield* snapshot
-              .getThreadShellById(threadId)
-              .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationThreadShell>())),
-          );
+          // A failed read is transient; only a `None` means the thread is gone.
+          const lookup = yield* Effect.exit(snapshot.getThreadShellById(threadId));
+          if (Exit.isFailure(lookup)) {
+            yield* retryLater(state, root, card.id, Cause.pretty(lookup.cause));
+            continue;
+          }
+          const shell = Option.getOrUndefined(lookup.value);
           if (shell === undefined) {
             yield* needsDecision(state, root, card.id, `Worker thread ${runId} no longer exists.`);
             continue;
@@ -814,8 +823,11 @@ export const AgentBoardRunnerLive = Layer.effect(
 
     let lastDiscoveryAt = 0;
     const pollAll = Effect.gen(function* () {
-      const roots = new Set<string>([...projects.keys(), ...nudges]);
+      // Drained into `forced` so the polling-interval gate below cannot swallow
+      // a nudge that lands right after a tick.
+      const forced = new Set(nudges);
       nudges.clear();
+      const roots = new Set<string>([...projects.keys(), ...forced]);
       // ponytail: the full read model is heavy; reading it once per discovery
       // interval (not once per second) keeps the cost off the hot path. Swap in
       // a projects-only query if this ever shows up in a profile.
@@ -830,6 +842,7 @@ export const AgentBoardRunnerLive = Layer.effect(
       for (const root of roots) {
         const state = yield* stateFor(root);
         const due =
+          forced.has(root) ||
           state.lastTickMillis === undefined ||
           millis - state.lastTickMillis >= state.workflow.config.polling.intervalMs;
         if (due) yield* tick(root);

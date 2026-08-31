@@ -34,6 +34,25 @@ const DECIDE =
 
 const decodeBoard = Schema.decodeUnknownSync(AgentBoardFile);
 
+/**
+ * `TestClock.adjust` starts the scheduler's sweep but cannot drive its async
+ * file IO to completion. Each `read` is a real filesystem round-trip, so the
+ * loop itself is the yield that lets the forked tick finish.
+ */
+const eventually = <A, E>(read: Effect.Effect<A, E>, ok: (value: A) => boolean) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const value = yield* read;
+      if (ok(value)) return value;
+      yield* Effect.yieldNow;
+    }
+    return yield* read;
+  });
+
+/** Give a forked tick every chance to land before asserting it did not run. */
+const settle = <A, E>(read: Effect.Effect<A, E>) =>
+  eventually(read, () => false).pipe(Effect.asVoid);
+
 const readyBoard = (root: string, enabled: boolean): AgentBoardFile =>
   decodeBoard({
     schemaVersion: 1,
@@ -254,6 +273,36 @@ describe("AgentBoardRunner", () => {
       const types = (yield* Ref.get(s.harness.commands)).map((c) => c.type);
       expect(types.slice(-2)).toEqual(["thread.turn.interrupt", "thread.session.stop"]);
       expect((yield* s.runner.status(s.root)).activeCardIds).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a nudge forces a tick before the polling interval elapses", () =>
+    Effect.gen(function* () {
+      const s = yield* setup({ enabled: false });
+      yield* s.runner.tick(s.root);
+      yield* s.patchBoard((board) => ({ ...board, runner: { ...board.runner, enabled: true } }));
+
+      // Control: the polling interval (15s) has not elapsed, so nothing happens.
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* settle(s.card());
+      expect((yield* s.card()).state).toBe("Ready");
+
+      yield* s.runner.nudge(s.root);
+      yield* TestClock.adjust(Duration.seconds(1));
+      expect((yield* eventually(s.card(), (c) => c.state === "Running")).state).toBe("Running");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a failed projection read backs the card off instead of parking it", () =>
+    Effect.gen(function* () {
+      const s = yield* setup();
+      yield* s.harness.failNextProjectLookup;
+      yield* s.runner.tick(s.root);
+      const card = yield* s.card();
+      expect(card.state).toBe("Diagnosing");
+      expect(card.runtime.currentError).toContain("projection unavailable");
+      expect(card.runtime.currentDecisionQuestion).toBeUndefined();
+      expect(yield* s.threadIds()).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
