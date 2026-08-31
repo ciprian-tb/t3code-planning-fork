@@ -4,6 +4,11 @@ T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provid
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
+> This checkout is the **planning fork**: upstream T3 Code plus a project-local
+> agent board (`.t3/agent-board.json`), a server-side board runner, and the
+> supervisor workflow described below. `PATCH.md` is the repair map for that
+> patch; `WORKFLOW.md` is its runtime contract.
+
 ## What makes T3 Code special?
 
 We have over 200,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.
@@ -72,7 +77,7 @@ The most common defect in this repo is a change that works on the path you teste
 - **Contracts.** Anything crossing the wire is typed in `packages/contracts`. Change the schema and the server, web, mobile, and desktop all follow.
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
 - **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.
-- **Docs.** Check whether the change makes existing guidance inaccurate. Apply the [documentation rules](#documentation) before adding anything.
+- **Docs.** Check whether the change makes existing guidance inaccurate. Apply the [documentation rules](#documentation) before adding anything. The fork also keeps its portable planning stack under `docs/agents/`.
 
 ## Dev servers
 
@@ -137,6 +142,40 @@ Most code changes do not need an internal documentation change. Agents can read 
 - Do not commit implementation plans, research notes, or agent scratch files. Keep temporary working material outside the worktree. `.plans/` is gitignored only as a safety net for legacy tooling.
 - Track active maintainer work in the GitHub issue or project item that owns it. External proposals follow `CONTRIBUTING.md` and belong in Ideas discussions.
 - A merged PR is the implementation record. Close or update its tracking item when the work lands; do not preserve a second checklist in the repository.
+
+## Supervisor-first workflow (fork)
+
+For non-trivial implementation work the default agent is a supervisor, not a direct coding worker. The supervisor:
+
+- Reads `WORKFLOW.md`, `PROJECT.md`, `CONTEXT.md`, the linked slice plan, the linked task record, and `.t3/agent-board.json` before shaping work.
+- Runs an architectural pass before implementation starts, and creates or updates the board card and its task record: dependencies, allowed write scopes, acceptance criteria, proof-of-done.
+- Delegates production code changes to fresh worker agents when orchestration is available and the user has authorized delegation.
+- Requires worker reports covering changed files, verification run, docs updated, blockers, risks, and remaining gaps.
+- Uses a review pass before marking work `Done`, and keeps the board and task records in sync as the visible proof ledger.
+
+Trivial edits, docs-only changes, formatting, and explicitly requested tiny fixes may be handled directly. If a small change affects project direction, dependencies, workflow state, or patch maintenance, update the planning docs before closing.
+
+## Public patch maintenance (fork)
+
+This repository is a public fork of upstream T3 Code. Keep `PATCH.md` current whenever a change adds, moves, or materially changes fork-specific behavior. It has to answer: which files are part of the patch, why the patch exists, how it attaches to upstream, what breaks when upstream changes, and how to repair it after an upgrade.
+
+Prefer isolated modules, contracts, and docs over scattering fork behavior through unrelated code paths. When you must touch a core T3 file, keep the attachment point small and document it in `PATCH.md` in the same change.
+
+## Agent board planning graph (fork)
+
+The Planning surface (route `/planning/$environmentId/$projectId`, web and desktop only) renders `.t3/agent-board.json`. Its dependency tree is generated from board fields, not drawn by hand. Keep these current on every card you touch:
+
+- `area` — the larger sub-project bucket, such as Frontend, Backend, or Admin.
+- `slice` — the smaller vertical chunk inside an area.
+- `dependencies` — card IDs that must reach `Done` before this card is claimable.
+- `taskRecordPath` — the linked task record under `docs/agents/tasks/`.
+- `slicePlanPath` — the linked slice plan under `docs/agents/slices/`.
+
+Use `dependencies` only for hard execution blockers. For everything looser, say it in the task or slice markdown with this vocabulary, and leave `dependencies` alone: `connects to` (must coordinate, can run in parallel), `shares contract with` (meet at an API, schema, event, route, data shape, permission rule, or UI state), `conflicts with` (unsafe in parallel — put it in the card's `parallelism.conflictsWith` instead), `enables` (makes the work usable, is not required to implement it).
+
+Example: a login screen and an auth endpoint `share contract with` each other; an end-to-end login card `depends on` both. Mirror dependency changes from prose back into the board fields — prose explains, the board fields are authoritative for the graph.
+
+The board runner only ever launches cards in `Ready`, and `Ready` is the only state a new card must not default to. `Running`, `Diagnosing`, and `Reviewing` are runner-owned: the manual `Run` control and the `projects.claimAgentBoardCard` RPC both refuse them. If you are the worker or reviewer on a card, end every turn with exactly one fenced `agent-board-result` block — the runner reads that block and nothing else to decide what happens next (`WORKFLOW.md` → Result protocol).
 
 ## How it works
 
