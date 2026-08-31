@@ -2,6 +2,7 @@ import type { AgentBoardCard, AgentBoardState } from "@t3tools/contracts";
 import { PlayIcon } from "lucide-react";
 import { memo, useState } from "react";
 
+import { answerDecision } from "./agentBoardDecision";
 import {
   MOVABLE_STATES,
   PARALLELISM_SAFETY_OPTIONS,
@@ -73,6 +74,7 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
   const [editedCardId, setEditedCardId] = useState<string | null>(null);
   const [detailDraft, setDetailDraft] = useState<DetailDraft | null>(null);
   const [intentDraft, setIntentDraft] = useState<IntentDraft | null>(null);
+  const [answer, setAnswer] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   // Reset the drafts during render whenever the open card changes — including
@@ -82,6 +84,7 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
     setEditedCardId(card?.id ?? null);
     setDetailDraft(card ? detailDraftFromCard(card) : null);
     setIntentDraft(card ? intentDraftFromCard(card) : null);
+    setAnswer("");
     setError(null);
   }
 
@@ -95,6 +98,14 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
     const intentBrief = intentBriefFromDraft(intentDraft);
     const next = cardWithDetailDraft(card, detailDraft);
     onSave((intentBrief ? { ...next, intentBrief } : next) as AgentBoardCard);
+    onOpenChange(false);
+  };
+
+  // The answer is applied to the card as the server last saw it, not to the
+  // open drafts: unblocking a stuck card should not smuggle in half-typed edits.
+  const handleAnswer = () => {
+    if (!card) return;
+    onSave(answerDecision(card, answer, new Date().toISOString()));
     onOpenChange(false);
   };
 
@@ -179,7 +190,22 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
                   {card.runtime.currentError}
                 </p>
               ) : null}
-              {card.runtime.currentDecisionQuestion ? (
+              {card.state === "Needs Decision" ? (
+                <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+                  <p className="text-[12px] text-amber-100">
+                    {card.runtime.currentDecisionQuestion ?? "This card is waiting on a decision."}
+                  </p>
+                  <Textarea
+                    value={answer}
+                    onChange={(event) => setAnswer(event.currentTarget.value)}
+                    placeholder="Answer the question; it is kept as a constraint on the brief."
+                    className="min-h-16 text-sm"
+                  />
+                  <Button size="xs" onClick={handleAnswer} disabled={busy || !answer.trim()}>
+                    Answer &amp; re-run
+                  </Button>
+                </div>
+              ) : card.runtime.currentDecisionQuestion ? (
                 <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[12px] text-amber-100">
                   {card.runtime.currentDecisionQuestion}
                 </p>

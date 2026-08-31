@@ -89,6 +89,9 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:agent-board-runner-status",
       tag: WS_METHODS.projectsGetAgentBoardRunnerStatus,
       staleTimeMs: 2_000,
+      // The runner ticks on its own, so the status line has to poll to stay
+      // honest. Only mounted atoms refresh, so this costs nothing off Planning.
+      refreshIntervalMs: 5_000,
       idleTtlMs: 60_000,
     }),
     optimisticFile: (target: OptimisticProjectFileTarget) =>

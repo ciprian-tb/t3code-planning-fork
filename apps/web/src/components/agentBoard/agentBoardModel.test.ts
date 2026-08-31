@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildExecutionTree,
+  cardRuntimeSummary,
   cardWithDetailDraft,
   cardWithPlanningField,
   cardWithState,
@@ -12,6 +13,7 @@ import {
   intentDraftFromCard,
   intentSaveError,
   newCardForState,
+  runnerStatusLine,
   sortCardsForTable,
   updateCard,
 } from "./agentBoardModel";
@@ -320,5 +322,122 @@ describe("intentSaveError", () => {
   it("saves once the intent itself is filled in", () => {
     const ready = card("A", { state: "Ready" });
     expect(intentSaveError(ready, { ...blank, intent: "ship it" })).toBeNull();
+  });
+});
+
+describe("cardRuntimeSummary", () => {
+  const NOW = Date.parse("2026-01-01T12:00:00.000Z");
+
+  it("summarises the live phase with its attempt and turn counters", () => {
+    const running = card("A", {
+      state: "Running",
+      runtime: {
+        attemptCount: 2,
+        turnCount: 5,
+        repairCycleCount: 1,
+        reviewFindings: [],
+        phase: "repairing",
+      },
+    });
+    expect(cardRuntimeSummary(running, NOW).phase).toBe("repairing · attempt 2 · turn 5");
+  });
+
+  it("shows no phase badge on a card the runner never picked up", () => {
+    expect(cardRuntimeSummary(card("A"), NOW).phase).toBeNull();
+  });
+
+  it("counts the backoff down to the second and stops once it has elapsed", () => {
+    const pending = (nextRetryAt: string) =>
+      card("A", {
+        state: "Diagnosing",
+        runtime: {
+          attemptCount: 1,
+          turnCount: 1,
+          repairCycleCount: 0,
+          reviewFindings: [],
+          nextRetryAt,
+        },
+      });
+    expect(cardRuntimeSummary(pending("2026-01-01T12:01:05.000Z"), NOW).retryIn).toBe(
+      "retry in 01:05",
+    );
+    expect(cardRuntimeSummary(pending("2026-01-01T12:10:00.000Z"), NOW).retryIn).toBe(
+      "retry in 10:00",
+    );
+    // A sub-second remainder rounds up, so the label never shows 00:00 while
+    // the card is still waiting.
+    expect(cardRuntimeSummary(pending("2026-01-01T12:01:05.400Z"), NOW).retryIn).toBe(
+      "retry in 01:06",
+    );
+    expect(cardRuntimeSummary(pending("2026-01-01T11:59:59.000Z"), NOW).retryIn).toBeNull();
+  });
+
+  it("surfaces the decision question only while the card is actually waiting on one", () => {
+    const runtime = {
+      attemptCount: 1,
+      turnCount: 1,
+      repairCycleCount: 0,
+      reviewFindings: [],
+      currentDecisionQuestion: "Postgres or SQLite?",
+    };
+    expect(cardRuntimeSummary(card("A", { state: "Needs Decision", runtime }), NOW).question).toBe(
+      "Postgres or SQLite?",
+    );
+    expect(cardRuntimeSummary(card("A", { state: "Running", runtime }), NOW).question).toBeNull();
+  });
+
+  it("passes the current error through and reports nothing when there is none", () => {
+    const failing = card("A", {
+      runtime: {
+        attemptCount: 1,
+        turnCount: 1,
+        repairCycleCount: 0,
+        reviewFindings: [],
+        currentError: "worktree is dirty",
+      },
+    });
+    expect(cardRuntimeSummary(failing, NOW).error).toBe("worktree is dirty");
+    expect(cardRuntimeSummary(card("A"), NOW).error).toBeNull();
+  });
+});
+
+describe("runnerStatusLine", () => {
+  const NOW = Date.parse("2026-01-01T12:00:00.000Z");
+
+  it("names the workflow file, the active card count and the tick age", () => {
+    expect(
+      runnerStatusLine(
+        {
+          enabled: true,
+          workflowSource: "workflow-md",
+          activeCardIds: ["A", "B"] as AgentBoardCardId[],
+          lastTickAt: "2026-01-01T11:58:30.000Z",
+        },
+        NOW,
+      ),
+    ).toBe("workflow: WORKFLOW.md  ·  active: 2  ·  last tick 1m ago");
+  });
+
+  it("flags a broken WORKFLOW.md and names the config the runner fell back to", () => {
+    expect(
+      runnerStatusLine(
+        {
+          enabled: true,
+          workflowSource: "last-known-good",
+          workflowError: "maxTurns must be positive",
+          activeCardIds: [],
+          lastTickAt: "2026-01-01T11:59:57.000Z",
+        },
+        NOW,
+      ),
+    ).toBe(
+      "workflow: invalid (last-known-good): maxTurns must be positive  ·  active: 0  ·  last tick 3s ago",
+    );
+  });
+
+  it("says the runner has never ticked instead of inventing an age", () => {
+    expect(
+      runnerStatusLine({ enabled: false, workflowSource: "defaults", activeCardIds: [] }, NOW),
+    ).toBe("workflow: defaults  ·  active: 0  ·  last tick never");
   });
 });

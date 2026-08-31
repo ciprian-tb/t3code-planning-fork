@@ -9,7 +9,9 @@ import {
   type AgentBoardCardId,
   type AgentBoardFile,
   type AgentBoardIntentBrief,
+  type AgentBoardRunnerStatus,
   type AgentBoardState,
+  type AgentBoardWorkflowSource,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -145,6 +147,68 @@ export function stateTone(state: AgentBoardState): string {
     default:
       return "border-border/70 bg-muted/30 text-muted-foreground";
   }
+}
+
+export interface CardRuntimeSummary {
+  /** `<phase> · attempt <n> · turn <n>`, or null while the runner is not on this card. */
+  readonly phase: string | null;
+  /** `retry in mm:ss` while the card is waiting out failure backoff. */
+  readonly retryIn: string | null;
+  readonly error: string | null;
+  readonly question: string | null;
+}
+
+/**
+ * What the runner is doing to one card right now, as strings a tile can print.
+ * `now` is passed in so the caller owns the clock, and the re-render cadence.
+ */
+export function cardRuntimeSummary(card: AgentBoardCard, now: number): CardRuntimeSummary {
+  const runtime = card.runtime;
+  const retryMs = runtime.nextRetryAt ? Date.parse(runtime.nextRetryAt) - now : 0;
+  return {
+    phase: runtime.phase
+      ? `${runtime.phase} · attempt ${runtime.attemptCount} · turn ${runtime.turnCount}`
+      : null,
+    retryIn: retryMs > 0 ? `retry in ${formatCountdown(retryMs)}` : null,
+    error: runtime.currentError ?? null,
+    // Only a card parked in `Needs Decision` is actually waiting on an answer;
+    // the same question left on a running card would be a lying label.
+    question: card.state === "Needs Decision" ? (runtime.currentDecisionQuestion ?? null) : null,
+  };
+}
+
+function formatCountdown(ms: number): string {
+  const seconds = Math.ceil(ms / 1000);
+  const minutes = String(Math.floor(seconds / 60)).padStart(2, "0");
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function formatTickAge(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  return `${Math.floor(seconds / 3600)}h ago`;
+}
+
+const WORKFLOW_SOURCE_LABELS: Record<AgentBoardWorkflowSource, string> = {
+  "workflow-md": "WORKFLOW.md",
+  "last-known-good": "last-known-good",
+  defaults: "defaults",
+};
+
+/**
+ * The one muted line under the `Runner` switch: which workflow config the
+ * runner loaded, how many cards it is driving, and how fresh its last tick is.
+ */
+export function runnerStatusLine(status: AgentBoardRunnerStatus, now: number): string {
+  const source = WORKFLOW_SOURCE_LABELS[status.workflowSource];
+  return [
+    status.workflowError
+      ? `workflow: invalid (${source}): ${status.workflowError}`
+      : `workflow: ${source}`,
+    `active: ${status.activeCardIds.length}`,
+    `last tick ${status.lastTickAt ? formatTickAge(now - Date.parse(status.lastTickAt)) : "never"}`,
+  ].join("  ·  ");
 }
 
 export function intentDraftFromCard(card: AgentBoardCard): IntentDraft {

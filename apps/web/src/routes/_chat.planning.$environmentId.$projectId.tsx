@@ -5,12 +5,15 @@ import { ArrowLeftIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo } from "react";
 
 import { AgentBoardPanel } from "../components/agentBoard/AgentBoardPanel";
+import { AgentBoardRunnerControls } from "../components/agentBoard/AgentBoardRunnerControls";
 import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
 import { useClientSettings } from "../hooks/useSettings";
 import { getLatestThreadForProject } from "../lib/threadSort";
 import { resolvePlanningDestination, usePlanningFeaturesDisabled } from "../planningFeaturesState";
 import { useProject, useThreadShellsForProjectRefs } from "../state/entities";
+import { projectEnvironment } from "../state/projects";
+import { useAtomCommand } from "../state/use-atom-command";
 
 function PlanningRouteView() {
   const navigate = useNavigate();
@@ -25,7 +28,20 @@ function PlanningRouteView() {
   const project = useProject(projectRef);
   const threads = useThreadShellsForProjectRefs(projectRefs);
   const threadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
-  const [planningDisabled, togglePlanningDisabled] = usePlanningFeaturesDisabled();
+  const workspaceRoot = project?.workspaceRoot;
+  const setRunnerEnabled = useAtomCommand(projectEnvironment.setAgentBoardRunnerEnabled, {
+    reportFailure: false,
+  });
+  // Break is a stop button: leaving the runner driving agents on a surface the
+  // operator just shut would make it a half-measure.
+  const stopRunner = useCallback(async () => {
+    if (!workspaceRoot) return;
+    await setRunnerEnabled({
+      environmentId: projectRef.environmentId,
+      input: { cwd: workspaceRoot, enabled: false },
+    });
+  }, [projectRef.environmentId, setRunnerEnabled, workspaceRoot]);
+  const [planningDisabled, togglePlanningDisabled] = usePlanningFeaturesDisabled(stopRunner);
 
   // Landing spot when there is no history entry to return to (direct URL, or a
   // forced exit): the project's own most recent thread, ranked exactly as the
@@ -81,17 +97,25 @@ function PlanningRouteView() {
         <span className="min-w-0 truncate text-[11px] text-muted-foreground/55">
           {project?.title ?? "Planning"}
         </span>
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          className="ml-auto gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-amber-200"
-          onClick={togglePlanningDisabled}
-          title="Break glass: disable Planning features and return to chat"
-        >
-          <TriangleAlertIcon className="size-3.5" />
-          Break
-        </Button>
+        <div className="ml-auto flex min-w-0 items-center gap-3">
+          {planningDisabled ? null : (
+            <AgentBoardRunnerControls
+              environmentId={projectRef.environmentId}
+              workspaceRoot={workspaceRoot}
+            />
+          )}
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            className="shrink-0 gap-1.5 px-2 text-[11px] text-muted-foreground hover:text-amber-200"
+            onClick={togglePlanningDisabled}
+            title="Break glass: disable Planning features and return to chat"
+          >
+            <TriangleAlertIcon className="size-3.5" />
+            Break
+          </Button>
+        </div>
       </div>
       {/* The redirect above is a passive effect, so it runs a commit too late to
           stop the board's `createIfMissing` subscription from writing
@@ -99,10 +123,7 @@ function PlanningRouteView() {
           switch is read synchronously (useSyncExternalStore), so not rendering
           the panel keeps it unmounted from the very first commit. */}
       {planningDisabled ? null : (
-        <AgentBoardPanel
-          environmentId={projectRef.environmentId}
-          workspaceRoot={project?.workspaceRoot}
-        />
+        <AgentBoardPanel environmentId={projectRef.environmentId} workspaceRoot={workspaceRoot} />
       )}
     </SidebarInset>
   );
