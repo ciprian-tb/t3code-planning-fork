@@ -2385,14 +2385,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.projectsSetAgentBoardRunnerEnabled,
             Effect.gen(function* () {
-              const loaded = yield* agentBoard.load({ cwd: input.cwd });
-              const saved = yield* agentBoard.save({
-                cwd: input.cwd,
-                board: {
-                  ...loaded.board,
-                  runner: { ...loaded.board.runner, enabled: input.enabled },
-                },
-              });
+              const saved = yield* agentBoard.setRunnerEnabled(input);
               // Without this the board sits idle until the next poll tick.
               yield* agentBoardRunner.nudge(saved.board.projectRoot);
               return saved;

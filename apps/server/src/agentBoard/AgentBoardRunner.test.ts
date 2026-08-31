@@ -109,7 +109,10 @@ const setup = (opts: { workflow?: string; model?: boolean; enabled?: boolean } =
     const runtime = yield* build();
     const runner = Context.get(runtime, AgentBoardRunner);
     const boards = Context.get(runtime, AgentBoardFileSystem);
-    yield* boards.save({ cwd: root, board: readyBoard(root, opts.enabled ?? true) });
+    const enabled = opts.enabled ?? true;
+    // `save` never writes the runner block, so the flag goes through its owner.
+    yield* boards.save({ cwd: root, board: readyBoard(root, enabled) });
+    if (enabled) yield* boards.setRunnerEnabled({ cwd: root, enabled: true });
     yield* runner.start();
 
     const card = () =>
@@ -280,7 +283,7 @@ describe("AgentBoardRunner", () => {
     Effect.gen(function* () {
       const s = yield* setup({ enabled: false });
       yield* s.runner.tick(s.root);
-      yield* s.patchBoard((board) => ({ ...board, runner: { ...board.runner, enabled: true } }));
+      yield* s.boards.setRunnerEnabled({ cwd: s.root, enabled: true });
 
       // Control: the polling interval (15s) has not elapsed, so nothing happens.
       yield* TestClock.adjust(Duration.seconds(1));

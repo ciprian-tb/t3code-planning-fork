@@ -18,6 +18,7 @@ import {
   type AgentBoardLoadResult,
   type AgentBoardSaveInput,
   type AgentBoardSaveResult,
+  type AgentBoardSetRunnerEnabledInput,
 } from "@t3tools/contracts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
@@ -44,6 +45,10 @@ export class AgentBoardFileSystem extends Context.Service<
     /** Validate and atomically replace the board. */
     readonly save: (
       input: AgentBoardSaveInput,
+    ) => Effect.Effect<AgentBoardSaveResult, AgentBoardFileError>;
+    /** Flip `runner.enabled` on disk; the only writer of the operator-owned runner block. */
+    readonly setRunnerEnabled: (
+      input: AgentBoardSetRunnerEnabledInput,
     ) => Effect.Effect<AgentBoardSaveResult, AgentBoardFileError>;
     /** Move a `Ready` (or re-launched `Diagnosing`) card to `Running` and reserve its workspace. */
     readonly claim: (
@@ -231,11 +236,35 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // `runner` is operator-owned and only written by `setRunnerEnabled`. Clients
+  // round-trip a whole board they may have snapshotted before a toggle, so
+  // their copy of the block is dropped: disk wins, or the schema default does
+  // when there is no board on disk yet.
   const save: AgentBoardFileSystem["Service"]["save"] = (input) =>
     mutations.withPermit(
       Effect.gen(function* () {
         const { projectRoot, absolutePath } = yield* resolveBoardPath(input.cwd);
-        const board = yield* persistBoard(projectRoot, absolutePath, input.board);
+        // A missing (or unreadable) board leaves `runner` off the object so the
+        // schema default fills it; saving over a corrupt board still works.
+        const onDisk = yield* readBoard({ cwd: input.cwd }).pipe(Effect.orElseSucceed(() => null));
+        const { runner: _clientRunner, ...clientBoard } = input.board;
+        const board = yield* persistBoard(
+          projectRoot,
+          absolutePath,
+          onDisk === null ? clientBoard : { ...clientBoard, runner: onDisk.board.runner },
+        );
+        return { board, relativePath: AGENT_BOARD_RELATIVE_PATH } satisfies AgentBoardSaveResult;
+      }),
+    );
+
+  const setRunnerEnabled: AgentBoardFileSystem["Service"]["setRunnerEnabled"] = (input) =>
+    mutations.withPermit(
+      Effect.gen(function* () {
+        const loaded = yield* readBoard({ cwd: input.cwd });
+        const board = yield* persistBoard(loaded.projectRoot, loaded.absolutePath, {
+          ...loaded.board,
+          runner: { ...loaded.board.runner, enabled: input.enabled },
+        });
         return { board, relativePath: AGENT_BOARD_RELATIVE_PATH } satisfies AgentBoardSaveResult;
       }),
     );
@@ -306,7 +335,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  return AgentBoardFileSystem.of({ load, save, claim });
+  return AgentBoardFileSystem.of({ load, save, setRunnerEnabled, claim });
 });
 
 export const AgentBoardFileSystemLive = Layer.effect(AgentBoardFileSystem, make);

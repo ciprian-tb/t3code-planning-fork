@@ -29,13 +29,13 @@ const TIMESTAMP = "2026-08-30T10:00:00.000Z";
 
 const cardId = (value: string): AgentBoardCardId => value as AgentBoardCardId;
 
-const readyBoardWith = (projectRoot: string, id: string) =>
+const readyBoardWith = (projectRoot: string, id: string, title = "Ship the thing") =>
   decodeBoard({
     projectRoot,
     cards: [
       {
         id,
-        title: "Ship the thing",
+        title,
         state: "Ready",
         intentBrief: { intent: "Ship the thing" },
         runtime: { currentError: "boom", currentDecisionQuestion: "which way?" },
@@ -152,6 +152,102 @@ describe("AgentBoardFileSystem", () => {
           true,
         );
         expect(yield* fs.exists(path.join(cwd, AGENT_BOARD_RELATIVE_PATH))).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("ignores a client's runner block and keeps the on-disk runner state", () =>
+    run(
+      Effect.gen(function* () {
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+        yield* service.save({ cwd, board: readyBoardWith(cwd, "card-1") });
+        yield* service.setRunnerEnabled({ cwd, enabled: true });
+
+        // A stale panel snapshot taken before the toggle, saved after it.
+        const stale = decodeBoard({
+          ...readyBoardWith(cwd, "card-1", "Renamed by the panel"),
+          runner: { enabled: false, maxConcurrentCards: 4, repairCycles: 7 },
+        });
+        const saved = yield* service.save({ cwd, board: stale });
+
+        expect(saved.board.runner).toEqual({
+          enabled: true,
+          maxConcurrentCards: 1,
+          repairCycles: 3,
+        });
+        // Cards stay client-owned.
+        expect(saved.board.cards[0]?.title).toBe("Renamed by the panel");
+        const reloaded = yield* service.load({ cwd });
+        expect(reloaded.board.runner.enabled).toBe(true);
+        expect(reloaded.board.cards[0]?.title).toBe("Renamed by the panel");
+      }),
+    ),
+  );
+
+  it.effect("seeds the default runner block when the board file does not exist yet", () =>
+    run(
+      Effect.gen(function* () {
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+
+        const saved = yield* service.save({
+          cwd,
+          board: decodeBoard({
+            ...readyBoardWith(cwd, "card-1"),
+            runner: { enabled: true, maxConcurrentCards: 4, repairCycles: 7 },
+          }),
+        });
+        expect(saved.board.runner).toEqual({
+          enabled: false,
+          maxConcurrentCards: 1,
+          repairCycles: 3,
+        });
+      }),
+    ),
+  );
+
+  it.effect("setRunnerEnabled is the only way to flip runner.enabled", () =>
+    run(
+      Effect.gen(function* () {
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+        yield* service.save({ cwd, board: readyBoardWith(cwd, "card-1") });
+
+        const on = yield* service.setRunnerEnabled({ cwd, enabled: true });
+        expect(on.board.runner.enabled).toBe(true);
+        expect((yield* service.load({ cwd })).board.runner.enabled).toBe(true);
+        // The rest of the board survives the patch.
+        expect(on.board.cards[0]?.title).toBe("Ship the thing");
+        expect(on.board.runner.maxConcurrentCards).toBe(1);
+
+        const off = yield* service.setRunnerEnabled({ cwd, enabled: false });
+        expect(off.board.runner.enabled).toBe(false);
+        expect((yield* service.load({ cwd })).board.runner.enabled).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("serializes a card save against a concurrent runner toggle", () =>
+    run(
+      Effect.gen(function* () {
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+        yield* service.save({ cwd, board: readyBoardWith(cwd, "card-1") });
+
+        // Whichever order the two mutations land in, neither may lose the
+        // other's write: the toggle owns `runner`, the save owns `cards`.
+        yield* Effect.all(
+          [
+            service.save({ cwd, board: readyBoardWith(cwd, "card-1", "Edited mid-toggle") }),
+            service.setRunnerEnabled({ cwd, enabled: true }),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        const loaded = yield* service.load({ cwd });
+        expect(loaded.board.runner.enabled).toBe(true);
+        expect(loaded.board.cards[0]?.title).toBe("Edited mid-toggle");
       }),
     ),
   );
