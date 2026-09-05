@@ -246,6 +246,13 @@ describe("newCardForState", () => {
     expect(created.state).toBe("Ready");
     expect(created.intentBrief?.intent).toBe("Wire the runner");
     expect(created.runtime.attemptCount).toBe(0);
+    expect(created.id.startsWith("TASK-20260101-")).toBe(true);
+  });
+
+  it("gives two cards created in the same millisecond different ids", () => {
+    expect(newCardForState("First", "Draft", TIMESTAMP).id).not.toBe(
+      newCardForState("Second", "Draft", TIMESTAMP).id,
+    );
   });
 });
 

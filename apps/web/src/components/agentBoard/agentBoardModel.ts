@@ -16,6 +16,8 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { randomHex } from "~/lib/utils";
+
 const UNASSIGNED_AREA_LABEL = "Unassigned";
 const FUTURE_SCOPE_AREA_LABEL = "Future Scope";
 const UNASSIGNED_SLICE_LABEL = "Unassigned slice";
@@ -338,7 +340,9 @@ export function newCardForState(
   timestamp = new Date().toISOString(),
 ): AgentBoardCard {
   return decodeCard({
-    id: `TASK-${timestamp.slice(0, 10).replaceAll("-", "")}-${Date.parse(timestamp) || Date.now()}`,
+    // Random suffix, not the clock: two quick-adds inside the same millisecond
+    // used to produce the same id, and a duplicate id is a duplicate card.
+    id: `TASK-${timestamp.slice(0, 10).replaceAll("-", "")}-${randomHex(4)}`,
     title,
     state,
     priority: 3,
