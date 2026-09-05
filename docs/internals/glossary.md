@@ -45,3 +45,14 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Checkpoint          | A saved workspace state used for diffs and restore, stored as a hidden Git ref.                              |
 | Checkpoint baseline | The workspace state captured before the work being compared.                                                 |
 | Turn diff           | The workspace changes attributed to one turn.                                                                |
+
+## Planning fork
+
+- **Agent board:** The project-local `.t3/agent-board.json` file that holds task cards and runner state.
+- **Intent brief:** A card's intent, acceptance criteria, constraints, non-goals, and open decisions. Required before a card can be Ready.
+- **Board runner:** The server service that claims Ready cards, launches isolated work, and handles retry and review.
+- **Card worktree:** The isolated checkout reused across a card's implementation, retries, and review.
+- **Result block:** The fenced `agent-board-result` JSON response that tells the runner a worker or review outcome.
+- **Manual phase:** `runtime.phase: "manual"` marks a card and thread as human-owned; the runner does not adopt them.
+
+See [Agent board runner](./agent-board-runner.md) for ownership constraints.
