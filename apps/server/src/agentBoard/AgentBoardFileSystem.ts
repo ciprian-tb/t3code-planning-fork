@@ -30,6 +30,7 @@ import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as NodeCrypto from "node:crypto";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -79,15 +80,23 @@ const boardError = (message: string, cause?: unknown): AgentBoardFileError =>
  * becoming a directory name: no id can produce a `.` or `/` segment that walks
  * out of `.t3/workspaces`.
  *
- * ponytail: two ids differing only in punctuation collide onto one directory;
- * add a short hash suffix if that ever bites.
+ * Reducing is lossy — `card/1` and `card-1` both flatten to `card-1` — so any
+ * id the reduction changed gets a short digest of the *raw* id appended. Two
+ * cards can then never share a worktree, while ids that survive untouched keep
+ * the segment (and therefore the `agent-board/<segment>` branch) they already
+ * have on existing boards.
+ *
+ * ponytail: 6 hex of sha1 (~16M values); widen it if a board ever grows enough
+ * cards for the birthday bound to matter.
  */
 function agentBoardWorkspaceSegment(cardId: string): string {
   const segment = cardId
     .replaceAll(/[^a-zA-Z0-9_-]+/g, "-")
     .replaceAll(/^-+|-+$/g, "")
     .slice(0, 80);
-  return segment.length > 0 ? segment : "card";
+  if (segment === cardId) return segment;
+  const digest = NodeCrypto.createHash("sha1").update(cardId).digest("hex").slice(0, 6);
+  return segment.length > 0 ? `${segment.slice(0, 73)}-${digest}` : `card-${digest}`;
 }
 
 export const make = Effect.gen(function* () {

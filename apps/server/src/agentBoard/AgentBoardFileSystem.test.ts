@@ -362,6 +362,47 @@ describe("AgentBoardFileSystem", () => {
     ),
   );
 
+  it.effect("gives ids that sanitize alike distinct workspaces", () =>
+    run(
+      Effect.gen(function* () {
+        const service = yield* AgentBoardFileSystem;
+        const ids = ["card-1", "card/1", "card.1"];
+        const claimAll = (cwd: string) =>
+          Effect.gen(function* () {
+            yield* service.save({
+              cwd,
+              board: decodeBoard({
+                projectRoot: cwd,
+                cards: ids.map((id) => ({
+                  id,
+                  title: id,
+                  state: "Ready",
+                  intentBrief: { intent: "Ship the thing" },
+                  createdAt: TIMESTAMP,
+                  updatedAt: TIMESTAMP,
+                })),
+                createdAt: TIMESTAMP,
+                updatedAt: TIMESTAMP,
+              }),
+            });
+            const paths: string[] = [];
+            for (const id of ids) {
+              paths.push((yield* service.claim({ cwd, cardId: cardId(id) })).workspacePath);
+            }
+            return paths;
+          });
+
+        const paths = yield* claimAll(yield* tempProjectRoot);
+        // `card/1` and `card.1` both flatten to `card-1`; none may share a worktree.
+        expect(new Set(paths).size).toBe(3);
+        // An id the sanitizer leaves alone keeps the path existing boards use.
+        expect(paths[0]).toBe(".t3/workspaces/card-1");
+        // The suffix comes from the raw id, so it is the same on any board.
+        expect(yield* claimAll(yield* tempProjectRoot)).toEqual(paths);
+      }),
+    ),
+  );
+
   it.effect("keeps traversal card ids inside the project workspaces directory", () =>
     run(
       Effect.gen(function* () {
