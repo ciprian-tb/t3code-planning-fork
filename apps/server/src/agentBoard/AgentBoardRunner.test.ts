@@ -337,6 +337,38 @@ describe("AgentBoardRunner", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("status does not enroll an unknown root in the polling set", () =>
+    Effect.gen(function* () {
+      const s = yield* setup();
+      const fs = yield* FileSystem.FileSystem;
+      const other = yield* fs.makeTempDirectoryScoped({ prefix: "agent-board-status-" });
+
+      yield* s.runner.status(other);
+      const afterStatus = yield* s.ticksOf(other);
+
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* settle(s.ticksOf(other));
+      expect(yield* s.ticksOf(other)).toBe(afterStatus);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a root that leaves the project list with nothing in flight stops being polled", () =>
+    Effect.gen(function* () {
+      const s = yield* setup({ enabled: false });
+      yield* s.runner.tick(s.root);
+      yield* s.harness.hideProject;
+
+      // One sweep past the discovery interval: the root is pruned.
+      yield* TestClock.adjust(Duration.seconds(20));
+      yield* settle(s.ticksOf(s.root));
+      const pruned = yield* s.ticksOf(s.root);
+
+      yield* TestClock.adjust(Duration.seconds(40));
+      yield* settle(s.ticksOf(s.root));
+      expect(yield* s.ticksOf(s.root)).toBe(pruned);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("a failed projection read backs the card off instead of parking it", () =>
     Effect.gen(function* () {
       const s = yield* setup();

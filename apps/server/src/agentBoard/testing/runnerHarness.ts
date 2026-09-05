@@ -47,6 +47,8 @@ export interface Harness {
   readonly failNextProjectLookup: Effect.Effect<void>;
   /** Make the next `getThreadShellById` fail, as a flaky read would. */
   readonly failNextThreadShellLookup: Effect.Effect<void>;
+  /** Drop the project from the snapshot, as deleting it would. */
+  readonly hideProject: Effect.Effect<void>;
   /** Simulate a provider turn finishing with the given assistant text (or an error). */
   readonly finishTurn: (
     threadId: ThreadId,
@@ -67,6 +69,7 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
     const sequence = yield* Ref.make(0);
     const failProjectLookup = yield* Ref.make(false);
     const failThreadShellLookup = yield* Ref.make(false);
+    const projectVisible = yield* Ref.make(true);
 
     const session = (
       threadId: ThreadId,
@@ -162,12 +165,12 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
 
     const snapshot = ProjectionSnapshotQuery.of({
       getSnapshot: () =>
-        Ref.get(threads).pipe(
+        Effect.all([Ref.get(threads), Ref.get(projectVisible)]).pipe(
           Effect.map(
-            (map) =>
+            ([map, visible]) =>
               ({
                 snapshotSequence: 0,
-                projects: [project],
+                projects: visible ? [project] : [],
                 threads: [...map.values()],
                 updatedAt: project.updatedAt,
               }) as never,
@@ -273,6 +276,7 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
       project,
       failNextProjectLookup: Ref.set(failProjectLookup, true),
       failNextThreadShellLookup: Ref.set(failThreadShellLookup, true),
+      hideProject: Ref.set(projectVisible, false),
       finishTurn,
       layer: Layer.mergeAll(
         Layer.succeed(OrchestrationEngineService, engine),

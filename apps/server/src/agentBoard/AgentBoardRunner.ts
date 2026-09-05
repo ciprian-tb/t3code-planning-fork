@@ -844,8 +844,21 @@ export const AgentBoardRunnerLive = Layer.effect(
       if (millis - lastDiscoveryAt >= DISCOVERY_INTERVAL_MS) {
         lastDiscoveryAt = millis;
         const model = yield* snapshot.getSnapshot().pipe(Effect.orElseSucceed(() => undefined));
-        for (const project of model?.projects ?? []) {
-          if (project.deletedAt === null) roots.add(project.workspaceRoot);
+        if (model !== undefined) {
+          const discovered = new Set(
+            model.projects
+              .filter((project) => project.deletedAt === null)
+              .map((project) => project.workspaceRoot),
+          );
+          for (const root of discovered) roots.add(root);
+          // A root the project list no longer has, with nothing in flight, is
+          // dropped so the poll set cannot grow forever. `nudge` and `tick`
+          // both re-create state, so nothing that still matters stays evicted.
+          for (const [root, state] of projects) {
+            if (discovered.has(root) || state.tracked.size > 0 || forced.has(root)) continue;
+            projects.delete(root);
+            roots.delete(root);
+          }
         }
       }
       for (const root of roots) {
@@ -871,16 +884,19 @@ export const AgentBoardRunnerLive = Layer.effect(
         );
       });
 
+    // Read-scoped: never `stateFor`, or every status poll would enroll its root
+    // in the polling set for the lifetime of the server.
     const status = (root: string): Effect.Effect<AgentBoardRunnerStatus> =>
       Effect.gen(function* () {
-        const state = yield* stateFor(root);
+        const state = projects.get(root);
+        const workflow = state?.workflow ?? (yield* workflowFile.load(root));
         const loaded = yield* boards.load({ cwd: root }).pipe(Effect.option);
         return {
           enabled: Option.isSome(loaded) ? loaded.value.board.runner.enabled : false,
-          workflowSource: state.workflow.source,
-          ...(state.workflow.error === undefined ? {} : { workflowError: state.workflow.error }),
-          activeCardIds: [...state.tracked.keys()],
-          ...(state.lastTickAt === undefined ? {} : { lastTickAt: state.lastTickAt }),
+          workflowSource: workflow.source,
+          ...(workflow.error === undefined ? {} : { workflowError: workflow.error }),
+          activeCardIds: state === undefined ? [] : [...state.tracked.keys()],
+          ...(state?.lastTickAt === undefined ? {} : { lastTickAt: state.lastTickAt }),
         };
       });
 
