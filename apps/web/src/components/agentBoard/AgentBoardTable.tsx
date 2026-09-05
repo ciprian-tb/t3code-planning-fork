@@ -6,12 +6,12 @@ import {
   MOVABLE_STATES,
   cardWithPlanningField,
   sortCardsForTable,
-  stateTone,
+  stateBadgeVariant,
 } from "./agentBoardModel";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { cn } from "~/lib/utils";
 
 type TableColumn = "area" | "slice" | "card" | "status" | "priority" | "slicePlan" | "actions";
 type EditableColumn = Exclude<TableColumn, "status" | "actions">;
@@ -211,10 +211,14 @@ export const AgentBoardTable = memo(function AgentBoardTable({
               >
                 <SelectTrigger
                   size="xs"
-                  className={cn("h-8 min-w-0 rounded-none border-r-0", stateTone(card.state))}
+                  className="h-8 min-w-0 rounded-none border-r-0"
                   aria-label={`State for ${card.title}`}
                 >
-                  <SelectValue>{card.state}</SelectValue>
+                  <SelectValue>
+                    <Badge size="sm" variant={stateBadgeVariant(card.state)}>
+                      {card.state}
+                    </Badge>
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectPopup alignItemWithTrigger={false}>
                   {MOVABLE_STATES.map((state) => (

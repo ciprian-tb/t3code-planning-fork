@@ -2,7 +2,13 @@ import type { AgentBoardCard, AgentBoardCardId, AgentBoardState } from "@t3tools
 import { CheckCircle2Icon, CircleDotIcon, PencilIcon, PlayIcon, PlusIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useState, type DragEvent } from "react";
 
-import { BOARD_COLUMNS, MOVABLE_STATES, cardRuntimeSummary, stateTone } from "./agentBoardModel";
+import {
+  BOARD_COLUMNS,
+  MOVABLE_STATES,
+  cardRuntimeSummary,
+  stateBadgeVariant,
+} from "./agentBoardModel";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -220,14 +226,9 @@ export const AgentBoardKanban = memo(function AgentBoardKanban({
                     </p>
                   ) : null}
                   <div className="mt-2 flex items-center justify-between gap-2">
-                    <span
-                      className={cn(
-                        "rounded-md border px-1.5 py-0.5 text-[10px]",
-                        stateTone(card.state),
-                      )}
-                    >
+                    <Badge size="sm" variant={stateBadgeVariant(card.state)}>
                       {card.state}
-                    </span>
+                    </Badge>
                     <div className="flex items-center gap-1">
                       <Button
                         size="icon-xs"

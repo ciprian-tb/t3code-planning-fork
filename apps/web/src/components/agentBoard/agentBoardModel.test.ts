@@ -21,6 +21,7 @@ import {
   runCardError,
   runnerStatusLine,
   sortCardsForTable,
+  stateBadgeVariant,
   updateCard,
 } from "./agentBoardModel";
 
@@ -406,6 +407,22 @@ describe("runCardError", () => {
     expect(runCardError(ready, runnerOn(board([ready])))).toBe(
       "The runner is enabled — turn it off to run a card by hand.",
     );
+  });
+});
+
+describe("stateBadgeVariant", () => {
+  it("tints the run states apart from the finished and blocked ones", () => {
+    expect(stateBadgeVariant("Running")).toBe("warning");
+    expect(stateBadgeVariant("Diagnosing")).toBe("warning");
+    expect(stateBadgeVariant("Done")).toBe("success");
+    expect(stateBadgeVariant("Needs Decision")).toBe("error");
+    expect(stateBadgeVariant("Blocked")).toBe("error");
+  });
+
+  it("leaves the states that carry no signal neutral", () => {
+    expect(stateBadgeVariant("Draft")).toBe("outline");
+    expect(stateBadgeVariant("Backlog")).toBe("outline");
+    expect(stateBadgeVariant("Canceled")).toBe("outline");
   });
 });
 

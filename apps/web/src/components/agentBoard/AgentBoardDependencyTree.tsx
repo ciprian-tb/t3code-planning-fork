@@ -3,9 +3,8 @@ import { AlertTriangleIcon, RotateCcwIcon } from "lucide-react";
 import { memo } from "react";
 
 import type { ExecutionTreeRow } from "./agentBoardModel";
-import { stateTone } from "./agentBoardModel";
+import { stateBadgeVariant } from "./agentBoardModel";
 import { Badge } from "../ui/badge";
-import { cn } from "~/lib/utils";
 
 interface AgentBoardDependencyTreeProps {
   readonly rows: readonly ExecutionTreeRow[];
@@ -98,14 +97,9 @@ export const AgentBoardDependencyTree = memo(function AgentBoardDependencyTree({
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span
-                      className={cn(
-                        "rounded border px-1.5 py-0.5 text-[10px]",
-                        stateTone(row.card.state),
-                      )}
-                    >
+                    <Badge size="sm" variant={stateBadgeVariant(row.card.state)}>
                       {row.card.state}
-                    </span>
+                    </Badge>
                     <span className="truncate text-[10px] text-muted-foreground/45">
                       {row.cardId}
                     </span>

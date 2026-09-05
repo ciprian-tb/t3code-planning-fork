@@ -140,23 +140,30 @@ function planningSliceForCard(card: AgentBoardCard): string {
   return card.slice?.trim() || UNASSIGNED_SLICE_LABEL;
 }
 
-export function stateTone(state: AgentBoardState): string {
+/**
+ * State → `Badge` variant, so the Kanban, the planning table and the dependency
+ * tree tint a state identically and follow the app's palette instead of raw
+ * colour classes. Review shares `info` with Ready: the badge set has no fifth
+ * accent, and the surfaces that show both already separate them by column.
+ */
+export function stateBadgeVariant(
+  state: AgentBoardState,
+): "info" | "warning" | "success" | "error" | "outline" {
   switch (state) {
     case "Ready":
-      return "border-blue-500/30 bg-blue-500/10 text-blue-300";
-    case "Running":
-    case "Diagnosing":
-      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
     case "Review":
     case "Reviewing":
-      return "border-violet-500/30 bg-violet-500/10 text-violet-300";
+      return "info";
+    case "Running":
+    case "Diagnosing":
+      return "warning";
     case "Done":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+      return "success";
     case "Needs Decision":
     case "Blocked":
-      return "border-rose-500/30 bg-rose-500/10 text-rose-300";
+      return "error";
     default:
-      return "border-border/70 bg-muted/30 text-muted-foreground";
+      return "outline";
   }
 }
 
