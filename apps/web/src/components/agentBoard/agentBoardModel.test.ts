@@ -484,7 +484,14 @@ describe("cardWithLaunchedRun", () => {
     const launched = cardWithLaunchedRun(claimed(), { threadId: RUN_ID }, LAUNCHED_AT);
     expect(launched.state).toBe("Running");
     expect(launched.runtime.implementationRunId).toBe(RUN_ID);
-    expect(launched.runtime.phase).toBe("implementing");
+  });
+
+  // The runner skips manual cards outright, so this phase is what keeps it from
+  // adopting, continuing or stopping a card a human started.
+  it("marks the card manual so the runner leaves the human's run alone", () => {
+    expect(cardWithLaunchedRun(claimed(), { threadId: RUN_ID }, LAUNCHED_AT).runtime.phase).toBe(
+      "manual",
+    );
   });
 
   it("keeps the workspace the claim reserved and stores the launch branch", () => {
@@ -532,7 +539,6 @@ describe("cardWithLaunchedRun", () => {
 });
 
 describe("cardWithLaunchFailure", () => {
-  const RUN_ID = RuntimeSessionId.make("thread-abc");
   const FAILED_AT = "2026-02-02T00:00:00.000Z";
   const running = () =>
     card("CARD-1", {
@@ -546,26 +552,21 @@ describe("cardWithLaunchFailure", () => {
       },
     });
 
-  it("moves the card out of Running so it is never left claimed with no owner", () => {
+  it("parks the card as the human's, out of Running and out of the runner's way", () => {
     const parked = cardWithLaunchFailure(running(), { error: "worktree add failed" }, FAILED_AT);
     expect(parked.state).toBe("Diagnosing");
-    expect(parked.runtime.phase).toBe("repairing");
+    expect(parked.runtime.phase).toBe("manual");
     expect(parked.runtime.currentError).toBe("worktree add failed");
   });
 
   /**
-   * The runner re-launches a `Diagnosing` card that has no `implementationRunId`,
-   * and re-launching re-claims this card's workspace — a second agent in the
-   * worktree this run already reserved. Once a thread exists it has to survive
-   * the failure, so the runner continues that thread instead.
+   * A failed manual launch may have opened a thread, but that thread is a
+   * client draft with no server thread behind it until the user sends. Writing
+   * its id here would point the runner at a worker that never existed.
    */
-  it("keeps the launched thread id so a relaunch cannot re-claim the same workspace", () => {
-    const parked = cardWithLaunchFailure(
-      running(),
-      { error: "board save failed", threadId: RUN_ID },
-      FAILED_AT,
-    );
-    expect(parked.runtime.implementationRunId).toBe(RUN_ID);
+  it("records no run id, so the runner cannot mistake the card for a dead worker", () => {
+    const parked = cardWithLaunchFailure(running(), { error: "board save failed" }, FAILED_AT);
+    expect(parked.runtime.implementationRunId).toBeUndefined();
   });
 
   it("falls back to a usable message so the board save cannot reject a blank error", () => {

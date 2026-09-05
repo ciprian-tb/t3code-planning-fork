@@ -1,15 +1,10 @@
 /**
  * The manual half of the agent board launch sequence: what the Run button does
- * with a card the server has already claimed. It is the client-side twin of
- * `AgentBoardRunner.launch` (`apps/server/src/agentBoard/AgentBoardRunner.ts`)
- * and deliberately reuses the same prompt builders, the same worktree layout,
- * and the same board transitions so a card looks identical whether a human or
- * the runner started it.
- *
- * The one thing this must never skip is writing `implementationRunId` back to
- * the card. `claim` sets `Running` without it, and the runner reads a `Running`
- * card with no run id as ownerless — it re-claims the workspace and starts its
- * own agent in the worktree this run just reserved.
+ * with a card the server has already claimed. It reuses the same prompt
+ * builders and worktree layout as `AgentBoardRunner.launch`
+ * (`apps/server/src/agentBoard/AgentBoardRunner.ts`), but the card it leaves
+ * behind is marked `phase: "manual"` and belongs to the user from then on —
+ * the runner never adopts, continues or stops it.
  *
  * @module useRunAgentBoardCard
  */
@@ -73,7 +68,6 @@ export function useRunAgentBoardCard(
         claim.card.runtime.branchName ??
         `agent-board/${claim.workspacePath.slice(claim.workspacePath.lastIndexOf("/") + 1)}`;
 
-      let threadId: RuntimeSessionId | undefined;
       try {
         // ponytail: no reuse check — a second run of a card whose worktree
         // still exists fails here with git's own message and parks the card.
@@ -95,7 +89,6 @@ export function useRunAgentBoardCard(
         const session = await newThread(projectRef, { worktreePath: workspacePath, branch });
         if (session === null) throw new Error("Could not open a thread for this card.");
         const runId = RuntimeSessionId.make(session.threadId);
-        threadId = runId;
         useComposerDraftStore
           .getState()
           .setPrompt(session.draftId, buildImplementationPrompt(claim.card));
@@ -118,12 +111,7 @@ export function useRunAgentBoardCard(
           updateCard(
             claim.board,
             claim.card.id,
-            (card) =>
-              cardWithLaunchFailure(
-                card,
-                { error: failure.message, ...(threadId ? { threadId } : {}) },
-                now,
-              ),
+            (card) => cardWithLaunchFailure(card, { error: failure.message }, now),
             now,
           ),
         ).catch(() => undefined);

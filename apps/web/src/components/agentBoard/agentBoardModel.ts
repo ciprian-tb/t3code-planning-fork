@@ -357,8 +357,8 @@ export function cardWithState(
  * transition drops them first and re-states only what is still true, so a stale
  * error or retry stamp cannot survive a successful relaunch.
  *
- * Mirrors `transition` in `apps/server/src/agentBoard/boardScheduler.ts`: the
- * manual Run button and the runner have to leave a card in the same shape.
+ * Same clearing rule as `transition` in
+ * `apps/server/src/agentBoard/boardScheduler.ts`.
  */
 function runtimeWithoutTransientFields(card: AgentBoardCard, timestamp: string) {
   const {
@@ -372,9 +372,13 @@ function runtimeWithoutTransientFields(card: AgentBoardCard, timestamp: string) 
 }
 
 /**
- * The claim leaves a card `Running` with a reserved workspace and no thread.
- * This records the thread that owns it, which is what stops the runner from
- * treating the card as ownerless and re-claiming the same worktree.
+ * The human-owned launch: the claim leaves a card `Running` with a reserved
+ * workspace and no thread, and this records the thread the user will drive.
+ *
+ * This is deliberately NOT a mirror of the server's `transition("launched")`.
+ * `phase: "manual"` marks the card as the human's: the runner never adopts,
+ * continues or stops a manual card, so it is the user who moves it on to
+ * Review or Done by hand.
  */
 export function cardWithLaunchedRun(
   card: AgentBoardCard,
@@ -387,7 +391,7 @@ export function cardWithLaunchedRun(
     state: "Running",
     runtime: {
       ...runtime,
-      phase: "implementing",
+      phase: "manual",
       implementationRunId: run.threadId,
       turnCount: runtime.turnCount + 1,
       ...(run.branchName ? { branchName: run.branchName } : {}),
@@ -397,13 +401,17 @@ export function cardWithLaunchedRun(
 }
 
 /**
- * A launch that died after the claim. `Diagnosing` is the runner's retry state,
- * and a `threadId` is carried through whenever one already exists so the retry
- * continues that thread instead of re-claiming the workspace under it.
+ * A launch that died after the claim, parked for the human who started it:
+ * `Diagnosing` with `phase: "manual"`, so the runner leaves it alone.
+ *
+ * No run id is recorded, ever. The thread a failed manual launch may have
+ * opened is a client-side draft with no server thread behind it until the user
+ * presses Send, so recording it would hand the runner the id of a worker that
+ * never existed.
  */
 export function cardWithLaunchFailure(
   card: AgentBoardCard,
-  failure: { readonly error: string; readonly threadId?: RuntimeSessionId },
+  failure: { readonly error: string },
   timestamp: string,
 ): AgentBoardCard {
   return {
@@ -411,11 +419,10 @@ export function cardWithLaunchFailure(
     state: "Diagnosing",
     runtime: {
       ...runtimeWithoutTransientFields(card, timestamp),
-      phase: "repairing",
+      phase: "manual",
       // Board strings are `TrimmedNonEmptyString`; a blank message would make
       // the save that reports the failure fail too.
       currentError: failure.error.trim() || "Could not launch this card.",
-      ...(failure.threadId ? { implementationRunId: failure.threadId } : {}),
     },
     updatedAt: timestamp,
   } as AgentBoardCard;
