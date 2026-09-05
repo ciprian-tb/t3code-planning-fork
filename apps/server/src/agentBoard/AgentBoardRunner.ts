@@ -685,11 +685,15 @@ export const AgentBoardRunnerLive = Layer.effect(
     const tickUnlocked = (root: string, state: ProjectState) =>
       Effect.gen(function* () {
         state.workflow = yield* workflowFile.load(root);
+        // Stamped before the early return: a root with no board file has still
+        // been ticked, and `pollAll` would otherwise treat it as due forever.
+        // Stamped before the early return: a root with no board file has still
+        // been ticked, and `pollAll` would otherwise treat it as due forever.
+        state.lastTickMillis = yield* Clock.currentTimeMillis;
         const loaded = yield* boards.load({ cwd: root }).pipe(Effect.option);
         if (Option.isNone(loaded)) return;
         const now = yield* nowIso;
         state.lastTickAt = now;
-        state.lastTickMillis = yield* Clock.currentTimeMillis;
         let board = loaded.value.board;
 
         if (!board.runner.enabled) {

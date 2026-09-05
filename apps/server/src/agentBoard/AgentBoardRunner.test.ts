@@ -20,7 +20,7 @@ import {
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { AgentBoardFileSystem, AgentBoardFileSystemLive } from "./AgentBoardFileSystem.ts";
 import { AgentBoardRunner, AgentBoardRunnerLive } from "./AgentBoardRunner.ts";
-import { WorkflowFileLive } from "./WorkflowFile.ts";
+import { WorkflowFile, make as makeWorkflowFile } from "./WorkflowFile.ts";
 import { makeHarness } from "./testing/runnerHarness.ts";
 
 const NOW = "2026-08-30T00:00:00.000Z";
@@ -74,6 +74,25 @@ const readyBoard = (root: string, enabled: boolean): AgentBoardFile =>
     updatedAt: NOW,
   });
 
+/**
+ * A tick always starts by loading the workflow, so counting loads per root is
+ * the cheapest observable "this root was ticked".
+ */
+const countingWorkflowFile = (loads: Map<string, number>) =>
+  Layer.effect(
+    WorkflowFile,
+    makeWorkflowFile.pipe(
+      Effect.map((service) =>
+        WorkflowFile.of({
+          load: (root) =>
+            Effect.sync(() => loads.set(root, (loads.get(root) ?? 0) + 1)).pipe(
+              Effect.andThen(() => service.load(root)),
+            ),
+        }),
+      ),
+    ),
+  );
+
 const setup = (opts: { workflow?: string; model?: boolean; enabled?: boolean } = {}) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -96,12 +115,13 @@ const setup = (opts: { workflow?: string; model?: boolean; enabled?: boolean } =
     } as unknown as OrchestrationProject;
     const harness = yield* makeHarness(project);
 
+    const workflowLoads = new Map<string, number>();
     const build = () =>
       Layer.build(
         AgentBoardRunnerLive.pipe(
           Layer.provide(harness.layer),
           Layer.provideMerge(AgentBoardFileSystemLive.pipe(Layer.provide(WorkspacePaths.layer))),
-          Layer.provideMerge(WorkflowFileLive),
+          Layer.provideMerge(countingWorkflowFile(workflowLoads)),
           Layer.provide(NodeServices.layer),
         ),
       );
@@ -132,7 +152,8 @@ const setup = (opts: { workflow?: string; model?: boolean; enabled?: boolean } =
         Effect.flatMap((loaded) => boards.save({ cwd: root, board: patch(loaded.board) })),
         Effect.asVoid,
       );
-    return { root, harness, runner, boards, card, threadIds, build, patchBoard };
+    const ticksOf = (target: string) => Effect.sync(() => workflowLoads.get(target) ?? 0);
+    return { root, harness, runner, boards, card, threadIds, build, patchBoard, ticksOf };
   });
 
 describe("AgentBoardRunner", () => {
@@ -293,6 +314,26 @@ describe("AgentBoardRunner", () => {
       yield* s.runner.nudge(s.root);
       yield* TestClock.adjust(Duration.seconds(1));
       expect((yield* eventually(s.card(), (c) => c.state === "Running")).state).toBe("Running");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a root with no board file is not re-ticked every sweep", () =>
+    Effect.gen(function* () {
+      const s = yield* setup();
+      const fs = yield* FileSystem.FileSystem;
+      // No `.t3/agent-board.json`, so every tick bails out early.
+      const bare = yield* fs.makeTempDirectoryScoped({ prefix: "agent-board-bare-" });
+
+      yield* s.runner.nudge(bare);
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* settle(s.ticksOf(bare));
+      const ticked = yield* s.ticksOf(bare);
+      expect(ticked).toBeGreaterThan(0);
+
+      // Well inside the 15s default polling interval: no further ticks.
+      yield* TestClock.adjust(Duration.seconds(5));
+      yield* settle(s.ticksOf(bare));
+      expect(yield* s.ticksOf(bare)).toBe(ticked);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
