@@ -71,6 +71,34 @@ describe("prompts", () => {
     expect(prompt).toContain("implemented login");
   });
 
+  it("drops every task-record instruction when the card has no task record", () => {
+    const { taskRecordPath: _dropped, ...noRecord } = card as unknown as Record<string, unknown>;
+    const uiCard = noRecord as unknown as AgentBoardCard;
+
+    const prompts = [
+      buildImplementationPrompt(uiCard),
+      buildContinuationPrompt(uiCard, { kind: "continue" }),
+      buildReviewPrompt(uiCard, "implemented login"),
+    ];
+    for (const prompt of prompts) {
+      expect(prompt).not.toContain("task record");
+      expect(prompt).not.toContain("Task record");
+    }
+    // The verification requirement survives; only its source changes.
+    expect(prompts[0]).toContain("focused verification");
+    expect(prompts[1]).toContain("focused verification");
+    expect(prompts[2]).toContain("focused verification");
+
+    // With a task record, every one of those lines is back.
+    expect(buildImplementationPrompt(card)).toContain("named in the task record");
+    expect(buildImplementationPrompt(card)).toContain("task record's proof section");
+    expect(buildContinuationPrompt(card, { kind: "continue" })).toContain("task record proof");
+    expect(buildReviewPrompt(card, "implemented login")).toContain(
+      "Task record: docs/agents/tasks/TASK-1.md",
+    );
+    expect(buildReviewPrompt(card, "implemented login")).toContain("named in the task record");
+  });
+
   it("thread titles name the card", () => {
     expect(implementationThreadTitle(card)).toBe("Implement Add login");
     expect(reviewThreadTitle(card)).toBe("Review Add login");

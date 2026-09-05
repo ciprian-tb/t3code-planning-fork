@@ -18,16 +18,22 @@ const list = (label: string, values: ReadonlyArray<string> | undefined): string 
     ? `${label}: none`
     : `${label}:\n${values.map((value) => `- ${value}`).join("\n")}`;
 
-const WORKER_PROTOCOL = [
-  "When you finish this turn, end your message with exactly one fenced block:",
-  "```" + RESULT_FENCE,
-  '{"outcome":"done"|"continue"|"needs-decision"|"blocked","summary":"...","question":"...","changedFiles":["..."]}',
-  "```",
-  'Use "done" only after every acceptance criterion is met, focused verification passed, and the task record proof section is updated.',
-  'Use "continue" if you ran out of budget but the work is on track.',
-  'Use "needs-decision" only for intent, scope, risk, credentials, cost, or destructive actions; put the exact question in "question".',
-  'Use "blocked" for an external blocker you cannot resolve.',
-].join("\n");
+// Cards created from the UI have no task record, so every instruction that
+// points at one is conditional: without this an agent hunts a file that does
+// not exist until it runs out of turns.
+const workerProtocol = (card: AgentBoardCard): string =>
+  [
+    "When you finish this turn, end your message with exactly one fenced block:",
+    "```" + RESULT_FENCE,
+    '{"outcome":"done"|"continue"|"needs-decision"|"blocked","summary":"...","question":"...","changedFiles":["..."]}',
+    "```",
+    card.taskRecordPath === undefined
+      ? 'Use "done" only after every acceptance criterion is met and focused verification passed; report that verification in "summary".'
+      : 'Use "done" only after every acceptance criterion is met, focused verification passed, and the task record proof section is updated.',
+    'Use "continue" if you ran out of budget but the work is on track.',
+    'Use "needs-decision" only for intent, scope, risk, credentials, cost, or destructive actions; put the exact question in "question".',
+    'Use "blocked" for an external blocker you cannot resolve.',
+  ].join("\n");
 
 const REVIEW_PROTOCOL = [
   "End your message with exactly one fenced block:",
@@ -75,11 +81,18 @@ export function buildImplementationPrompt(card: AgentBoardCard): string {
     "",
     "Execution rules:",
     "- Stay inside the allowed write scopes; if empty, stay inside this project.",
-    "- Run the focused verification named in the task record before reporting done.",
-    "- Update the task record's proof section (changed files, verification, gaps).",
+    ...(card.taskRecordPath === undefined
+      ? [
+          "- Run this project's focused verification for the files you touched (its test command for those files, plus a typecheck) before reporting done.",
+          "- Report the verification you ran, the changed files, and any gaps in your result summary.",
+        ]
+      : [
+          "- Run the focused verification named in the task record before reporting done.",
+          "- Update the task record's proof section (changed files, verification, gaps).",
+        ]),
     "- Do not ask questions you can answer from the docs.",
     "",
-    WORKER_PROTOCOL,
+    workerProtocol(card),
   ].join("\n");
 }
 
@@ -100,9 +113,11 @@ export function buildContinuationPrompt(card: AgentBoardCard, reason: Continuati
   return [
     `CONTINUE AGENT BOARD CARD ${card.id} (${card.title}).`,
     continuationWhy(reason),
-    "Do not restart from scratch; keep working in this workspace and update the task record proof.",
+    card.taskRecordPath === undefined
+      ? "Do not restart from scratch; keep working in this workspace."
+      : "Do not restart from scratch; keep working in this workspace and update the task record proof.",
     "",
-    WORKER_PROTOCOL,
+    workerProtocol(card),
   ].join("\n");
 }
 
@@ -113,14 +128,16 @@ export function buildReviewPrompt(card: AgentBoardCard, workerSummary: string): 
     "",
     "You are a fresh review agent with no implementation context. Do not trust the implementer's summary; verify.",
     `Implementer summary: ${workerSummary}`,
-    `Task record: ${card.taskRecordPath ?? "none"}`,
+    ...(card.taskRecordPath === undefined ? [] : [`Task record: ${card.taskRecordPath}`]),
     `Intent: ${brief?.intent ?? card.title}`,
     list("Acceptance criteria", brief?.acceptanceCriteria),
     list("Non-goals", brief?.nonGoals),
     "",
     "Steps:",
     "- Read every file changed on this branch (`git diff --stat` against the branch point, then the full diff).",
-    "- Re-run the focused verification named in the task record.",
+    card.taskRecordPath === undefined
+      ? "- Re-run this project's focused verification for the changed files yourself; do not take the implementer's word for it."
+      : "- Re-run the focused verification named in the task record.",
     "- Check acceptance criteria, scope drift, missing tests, and doc updates.",
     "- Fix trivial issues in place (typos, formatting, obvious one-liners) and say so.",
     "",
