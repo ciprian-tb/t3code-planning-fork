@@ -157,9 +157,9 @@ contract; the rest are context anchors.
 default to `Ready`; moving a card to `Ready` is the deliberate start-work
 signal.
 
-Kanban shows `Draft`, `Ready`, `Running`, `Review`, `Done`, and
-`Needs Decision`. Cards parked in `Backlog`, `Diagnosing`, `Reviewing`,
-`Blocked`, or `Canceled` are visible in the Planning table.
+Kanban shows `Draft`, `Ready`, `Running`, `Diagnosing`, `Reviewing`, `Review`,
+`Done`, and `Needs Decision`. Cards parked in `Backlog`, `Blocked`, or
+`Canceled` have no Kanban column and are visible in the Planning table.
 
 ## Card eligibility
 

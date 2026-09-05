@@ -91,7 +91,8 @@ Upstream files the patch touches. These are the repair points:
 
 Docs and portable planning assets that move with the patch: `AGENTS.md`,
 `WORKFLOW.md`, `PROJECT.md`, `CONTEXT.md`, `PATCH.md`, `docs/agents/`,
-`docs/user/planning.md`, and a project's own `.t3/agent-board.json`.
+`docs/user/agent-board.md`, `docs/internals/agent-board-runner.md`, and a
+project's own `.t3/agent-board.json`.
 
 ## Ownership rules worth keeping
 
@@ -109,6 +110,12 @@ Docs and portable planning assets that move with the patch: `AGENTS.md`,
   card `Running` with no `implementationRunId` until the user pressed send, and
   the runner would take that for an orphan and start its own agent in the same
   worktree.
+- **A whole-board save carries `expectedUpdatedAt`.** The panel sends the
+  `updatedAt` of the board it was derived from; a mismatch is refused with a
+  message starting `Agent board changed`, which the web matches on
+  (`isBoardConflictError`) to reload and re-ask. Without it a stale snapshot
+  would revert the runner's transitions on every other card. The prefix is part
+  of the contract — see `docs/internals/agent-board-runner.md`.
 - **The Planning surface is gated at render, not by a redirect.** The `Break`
   flag is read synchronously, so while it is pulled the board panel never
   mounts and cannot create `.t3/agent-board.json` in a project whose Planning is
@@ -144,10 +151,6 @@ Docs and portable planning assets that move with the patch: `AGENTS.md`,
   hidden. Stop it from that project's own header.
 - The manual `Run` affordance stays visible while the runner is enabled and
   only errors on click.
-- `save` is a whole-board last-writer-wins overwrite with no version check.
-  Only the `runner` block is protected.
-- Cards whose ids differ only in punctuation collide onto one workspace
-  directory.
 - Workspaces are never cleaned up automatically.
 
 ## Maintenance rule
