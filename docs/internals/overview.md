@@ -83,3 +83,6 @@ down, so new native capability goes in a child with a deadline, not an `import` 
 
 See the [glossary](./glossary.md) for shared terms and the
 [development runbook](../operations/development.md) for setup and checks.
+
+The planning fork adds a project-local board and runner. Its cross-component
+ownership constraints are described in [Agent board runner](./agent-board-runner.md).
