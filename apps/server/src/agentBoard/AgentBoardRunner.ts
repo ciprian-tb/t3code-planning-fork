@@ -125,6 +125,9 @@ const catchNonInterrupt = <A, E, R, A2, E2, R2>(
     ),
   );
 
+/** A human ran this card from the UI and owns its thread; the runner keeps out. */
+const isManual = (card: AgentBoardCard): boolean => card.runtime.phase === "manual";
+
 /** Board strings are `TrimmedNonEmptyString`; never persist blank or padded text. */
 const text = (value: string, fallback: string): string => value.trim() || fallback;
 
@@ -700,8 +703,6 @@ export const AgentBoardRunnerLive = Layer.effect(
         state.workflow = yield* workflowFile.load(root);
         // Stamped before the early return: a root with no board file has still
         // been ticked, and `pollAll` would otherwise treat it as due forever.
-        // Stamped before the early return: a root with no board file has still
-        // been ticked, and `pollAll` would otherwise treat it as due forever.
         state.lastTickMillis = yield* Clock.currentTimeMillis;
         const loaded = yield* boards.load({ cwd: root }).pipe(Effect.option);
         if (Option.isNone(loaded)) return;
@@ -721,6 +722,11 @@ export const AgentBoardRunnerLive = Layer.effect(
         // Deleting the entry the loop is currently on is well-defined for Map.
         for (const [cardId, tracked] of state.tracked) {
           const card = board.cards.find((candidate) => candidate.id === cardId);
+          if (card !== undefined && isManual(card)) {
+            // The human took the card over; their thread is not ours to stop.
+            state.tracked.delete(cardId);
+            continue;
+          }
           if (card === undefined || !RUNNER_OWNED_STATES.has(card.state)) {
             yield* stopThread(tracked.threadId);
             state.tracked.delete(cardId);
@@ -732,6 +738,9 @@ export const AgentBoardRunnerLive = Layer.effect(
         for (const card of board.cards) {
           // `Diagnosing` cards are parked on a backoff; the retry pass owns them.
           if (!RUNNER_OWNED_STATES.has(card.state) || card.state === "Diagnosing") continue;
+          // Before the `runId === undefined` park: a manual card may legitimately
+          // have no runner-recorded thread at all.
+          if (isManual(card)) continue;
           // State, not `phase`: it is the field the user (and the UI) edits.
           const role: Role = card.state === "Reviewing" ? "review" : "implementation";
           const runId =
@@ -779,6 +788,8 @@ export const AgentBoardRunnerLive = Layer.effect(
 
         for (const card of board.cards) {
           if (card.state !== "Diagnosing" || state.tracked.has(card.id)) continue;
+          // The web parks a failed manual run Diagnosing too; it stays the human's.
+          if (isManual(card)) continue;
           if (card.runtime.nextRetryAt !== undefined && card.runtime.nextRetryAt > now) continue;
           // A card that failed before its thread existed has nothing to
           // continue; re-launch it (plan §8) instead of parking it.

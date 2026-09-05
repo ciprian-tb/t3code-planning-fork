@@ -439,6 +439,40 @@ describe("AgentBoardRunner", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("leaves a manual card alone in Running and in Diagnosing", () =>
+    Effect.gen(function* () {
+      const s = yield* setup();
+      const asManual = (state: "Running" | "Diagnosing") =>
+        s.patchBoard((board) => ({
+          ...board,
+          cards: board.cards.map((c) => ({
+            ...c,
+            state,
+            runtime: { ...c.runtime, phase: "manual" as const },
+          })),
+        }));
+
+      // The web's manual Run: Running, phase manual, no runner-recorded thread.
+      yield* asManual("Running");
+      yield* s.runner.tick(s.root);
+      yield* s.runner.tick(s.root);
+      let card = yield* s.card();
+      expect(card.state).toBe("Running");
+      expect(card.runtime.phase).toBe("manual");
+      expect(yield* s.threadIds()).toEqual([]);
+      expect((yield* s.runner.status(s.root)).activeCardIds).toEqual([]);
+
+      // The web parks a failed manual run Diagnosing; the retry pass must not
+      // adopt it either.
+      yield* asManual("Diagnosing");
+      yield* s.runner.tick(s.root);
+      card = yield* s.card();
+      expect(card.state).toBe("Diagnosing");
+      expect(card.runtime.phase).toBe("manual");
+      expect(yield* s.threadIds()).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("restart recovery re-tracks a Running card from board fields", () =>
     Effect.gen(function* () {
       const s = yield* setup();
