@@ -20,10 +20,18 @@ const UNASSIGNED_AREA_LABEL = "Unassigned";
 const FUTURE_SCOPE_AREA_LABEL = "Future Scope";
 const UNASSIGNED_SLICE_LABEL = "Unassigned slice";
 
+/**
+ * Kanban columns in state-machine order. Every state the runner owns
+ * (`RUNNER_OWNED_STATES` in `apps/server/src/agentBoard/boardScheduler.ts`)
+ * needs a column: a card the Kanban has no column for disappears from the
+ * board mid-run, and its `retryIn`/`error` badges go with it.
+ */
 export const BOARD_COLUMNS: ReadonlyArray<{ state: AgentBoardState; label: string }> = [
   { state: "Draft", label: "Draft" },
   { state: "Ready", label: "Ready" },
   { state: "Running", label: "Running" },
+  { state: "Diagnosing", label: "Diagnosing" },
+  { state: "Reviewing", label: "Reviewing" },
   { state: "Review", label: "Review" },
   { state: "Done", label: "Done" },
   { state: "Needs Decision", label: "Needs Decision" },

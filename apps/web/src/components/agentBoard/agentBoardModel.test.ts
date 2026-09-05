@@ -3,6 +3,7 @@ import { RuntimeSessionId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BOARD_COLUMNS,
   buildExecutionTree,
   cardRuntimeSummary,
   cardWithDetailDraft,
@@ -57,6 +58,23 @@ function boardWithCycle(first: string, second: string): AgentBoardFile {
     card(second, { area: "Core", dependencies: [first as AgentBoardCardId] }),
   ]);
 }
+
+describe("BOARD_COLUMNS", () => {
+  // Mirrors `RUNNER_OWNED_STATES` in `apps/server/src/agentBoard/boardScheduler.ts`
+  // (server-only module, so the list is restated rather than imported).
+  it("gives every runner-owned state a column so a card cannot vanish mid-run", () => {
+    const columnStates = BOARD_COLUMNS.map((column) => column.state);
+    for (const state of ["Running", "Diagnosing", "Reviewing"] as const) {
+      expect(columnStates).toContain(state);
+    }
+  });
+
+  it("orders the run states the way the runner walks them", () => {
+    const columnStates = BOARD_COLUMNS.map((column) => column.state);
+    expect(columnStates.indexOf("Running")).toBeLessThan(columnStates.indexOf("Reviewing"));
+    expect(columnStates.indexOf("Reviewing")).toBeLessThan(columnStates.indexOf("Review"));
+  });
+});
 
 describe("updateCard", () => {
   it("updates structured dependencies without mutating the source board", () => {
