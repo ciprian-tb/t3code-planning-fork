@@ -14,6 +14,7 @@ import {
   AgentBoardFile,
   type AgentBoardCardId,
   type OrchestrationProject,
+  ORPHANED_PROVIDER_SESSION_ERROR,
   type ThreadId,
 } from "@t3tools/contracts";
 
@@ -470,6 +471,34 @@ describe("AgentBoardRunner", () => {
       expect(card.state).toBe("Diagnosing");
       expect(card.runtime.phase).toBe("manual");
       expect(yield* s.threadIds()).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // The integrated pass restarted the server mid-run: the provider conversation
+  // was gone, so every continuation failed instantly and the card burned all its
+  // repair cycles without ever running again.
+  it.effect("a worker session lost to a restart is relaunched, not continued", () =>
+    Effect.gen(function* () {
+      const s = yield* setup();
+      yield* s.runner.tick(s.root);
+      const [impl] = yield* s.threadIds();
+      yield* s.harness.finishTurn(impl!, { error: ORPHANED_PROVIDER_SESSION_ERROR });
+      yield* s.runner.tick(s.root);
+      let card = yield* s.card();
+      expect(card.state).toBe("Diagnosing");
+      // Dropping the run id is what routes the retry to the re-launch branch.
+      expect(card.runtime.implementationRunId).toBeUndefined();
+      // The card keeps its workspace; only the conversation was lost.
+      expect(card.runtime.branchName).toBeDefined();
+
+      yield* TestClock.adjust(Duration.seconds(5));
+      yield* s.runner.tick(s.root);
+      card = yield* s.card();
+      expect(card.state).toBe("Running");
+      // A second thread, not another turn on the dead one.
+      const ids = yield* s.threadIds();
+      expect(ids).toHaveLength(2);
+      expect(card.runtime.implementationRunId).toBe(ids[1]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

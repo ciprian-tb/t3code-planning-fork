@@ -520,6 +520,15 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+/**
+ * The `lastError` a thread carries when its provider session did not outlive a
+ * server restart. The startup reconciliation writes it and readers match on it,
+ * so it lives here rather than in either of them: a thread marked this way has
+ * no resumable conversation left, and the only recovery is a new session.
+ */
+export const ORPHANED_PROVIDER_SESSION_ERROR =
+  "Provider session did not survive a server restart. Send a new message to continue.";
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,

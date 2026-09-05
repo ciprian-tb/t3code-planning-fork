@@ -178,7 +178,13 @@ describe("transition", () => {
     const card = mk({
       id: id("A"),
       state: "Running",
-      runtime: { attemptCount: 1, turnCount: 2, repairCycleCount: 0, reviewFindings: [] },
+      runtime: {
+        attemptCount: 1,
+        turnCount: 2,
+        repairCycleCount: 0,
+        reviewFindings: [],
+        implementationRunId: runId("t1"),
+      },
     });
     const retryAt = "2026-08-30T00:00:05.000Z";
     const next = transition(
@@ -191,6 +197,44 @@ describe("transition", () => {
     expect(next.runtime.currentError).toBe("boom");
     expect(next.runtime.nextRetryAt).toBe(retryAt);
     expect(next.runtime.attemptCount).toBe(2);
+    // Default retry keeps the thread: the turn failed, the conversation did not.
+    expect(next.runtime.implementationRunId).toBe("t1");
+  });
+
+  // The integrated pass showed a restarted server continuing a thread whose
+  // provider conversation was gone: every retry failed instantly and the card
+  // burned all its repair cycles without ever running.
+  it("retry-later with relaunch drops the dead worker thread", () => {
+    const card = mk({
+      id: id("A"),
+      state: "Running",
+      runtime: {
+        attemptCount: 0,
+        turnCount: 1,
+        repairCycleCount: 0,
+        reviewFindings: [],
+        implementationRunId: runId("t1"),
+        workspacePath: ".t3/workspaces/A",
+        branchName: "agent-board/A",
+      },
+    });
+    const next = transition(
+      card,
+      {
+        kind: "retry-later",
+        error: "session gone",
+        nextRetryAt: "2026-08-30T00:00:05.000Z",
+        relaunch: true,
+      },
+      NOW,
+    );
+    expect(next.state).toBe("Diagnosing");
+    // No run id is what makes the retry pass re-launch instead of continue.
+    expect(next.runtime.implementationRunId).toBeUndefined();
+    // The workspace is still the card's; only the conversation was lost.
+    expect(next.runtime.workspacePath).toBe(".t3/workspaces/A");
+    expect(next.runtime.branchName).toBe("agent-board/A");
+    expect(next.runtime.attemptCount).toBe(1);
   });
 
   it("success clears findings and records the summary", () => {

@@ -67,7 +67,7 @@ export type Transition =
   | { kind: "continued" }
   | { kind: "review-started"; threadId: RuntimeSessionId; summary?: string }
   | { kind: "repair"; findings: ReadonlyArray<string> }
-  | { kind: "retry-later"; error: string; nextRetryAt: string }
+  | { kind: "retry-later"; error: string; nextRetryAt: string; relaunch?: boolean | undefined }
   | { kind: "review-failed"; error: string; nextRetryAt: string }
   | { kind: "success"; state: "Review" | "Done"; summary: string }
   | { kind: "needs-decision"; question: string; summary?: string }
@@ -120,16 +120,22 @@ export function transition(card: AgentBoardCard, t: Transition, now: string): Ag
         repairCycleCount: rt.repairCycleCount + 1,
         reviewFindings: [...t.findings],
       });
-    case "retry-later":
+    case "retry-later": {
+      // `relaunch` means the worker thread itself is gone, not that its turn
+      // failed: drop the run id so the retry pass takes the re-launch branch
+      // and builds a fresh thread on the same worktree. Continuing a dead
+      // conversation only fails again, once per attempt, until the card parks.
+      const { implementationRunId: _dead, ...withoutWorker } = rt;
       // The board's `claim` only counts the initial claim; a failure after a
       // continuation has to count too, or backoff never grows.
       return set("Diagnosing", {
-        ...rt,
+        ...(t.relaunch === true ? withoutWorker : rt),
         phase: "repairing",
         attemptCount: rt.attemptCount + 1,
         currentError: t.error,
         nextRetryAt: t.nextRetryAt,
       });
+    }
     case "review-failed": {
       // The reviewer's own session died: drop its thread and stay in the
       // reviewing phase, so the retry pass starts a fresh reviewer instead of

@@ -26,6 +26,7 @@ import {
   type OrchestrationProject,
   type OrchestrationSession,
   type OrchestrationSessionStatus,
+  ORPHANED_PROVIDER_SESSION_ERROR,
 } from "@t3tools/contracts";
 import {
   buildContinuationPrompt,
@@ -251,7 +252,7 @@ export const AgentBoardRunnerLive = Layer.effect(
       root: string,
       cardId: AgentBoardCardId,
       error: string,
-      options?: { readonly review?: boolean },
+      options?: { readonly review?: boolean; readonly relaunch?: boolean },
     ) =>
       Effect.gen(function* () {
         const { board } = yield* boards.load({ cwd: root });
@@ -282,14 +283,13 @@ export const AgentBoardRunnerLive = Layer.effect(
         );
         // `transition` owns the attemptCount bump so backoff keeps growing
         // across continuations, which `claim` alone would never see.
+        const failure = text(error, "unknown failure");
         yield* saveCard(root, cardId, (candidate, now) =>
           transition(
             candidate,
-            {
-              kind: options?.review === true ? "review-failed" : "retry-later",
-              error: text(error, "unknown failure"),
-              nextRetryAt,
-            },
+            options?.review === true
+              ? { kind: "review-failed", error: failure, nextRetryAt }
+              : { kind: "retry-later", error: failure, nextRetryAt, relaunch: options?.relaunch },
             now,
           ),
         );
@@ -722,7 +722,11 @@ export const AgentBoardRunnerLive = Layer.effect(
             yield* stopThread(tracked.threadId);
             return yield* retryLater(state, root, card.id, error, { review: true });
           }
-          return yield* retryLater(state, root, card.id, error);
+          // A worker whose provider session did not outlive a restart has no
+          // conversation left to continue; ask for a fresh thread instead.
+          return yield* retryLater(state, root, card.id, error, {
+            relaunch: session.lastError === ORPHANED_PROVIDER_SESSION_ERROR,
+          });
         }
         const assistantText = yield* lastAssistantText(tracked.threadId);
         yield* tracked.role === "review"
