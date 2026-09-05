@@ -73,6 +73,16 @@ type Role = "implementation" | "review";
 interface Tracked {
   readonly threadId: ThreadId;
   readonly role: Role;
+  /**
+   * When this card's turn was dispatched, in millis. `thread.turn.start` only
+   * appends `message-sent` + `turn-start-requested`; the session keeps its
+   * previous (settled) status until a reactor picks the turn up, so a tick
+   * landing in that window would read the *old* turn's result and dispatch the
+   * same turn again. A session written no earlier than the dispatch is
+   * authoritative and clears the marker; so does a bounded wait, or a lost
+   * dispatch would strand the card.
+   */
+  pendingTurnSince?: number | undefined;
 }
 
 interface ProjectState {
@@ -164,6 +174,19 @@ export const AgentBoardRunnerLive = Layer.effect(
         projects.set(root, created);
         return created;
       });
+
+    /** Track a card whose turn was just dispatched; see `Tracked.pendingTurnSince`. */
+    const trackDispatch = (
+      state: ProjectState,
+      cardId: AgentBoardCardId,
+      threadId: ThreadId,
+      role: Role,
+    ) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.map((millis) => {
+          state.tracked.set(cardId, { threadId, role, pendingTurnSince: millis });
+        }),
+      );
 
     const rootOfTrackedThread = (threadId: ThreadId): string | undefined => {
       for (const [root, state] of projects) {
@@ -443,7 +466,7 @@ export const AgentBoardRunnerLive = Layer.effect(
             now,
           ),
         );
-        state.tracked.set(cardId, { threadId, role: "implementation" });
+        yield* trackDispatch(state, cardId, threadId, "implementation");
       }).pipe(orRetryLater(state, root, cardId));
 
     // ---- continue / review -------------------------------------------------
@@ -486,7 +509,7 @@ export const AgentBoardRunnerLive = Layer.effect(
         yield* saveCard(root, card.id, (candidate, now) =>
           transition(candidate, { kind: "continued" }, now),
         );
-        state.tracked.set(card.id, { threadId, role: "implementation" });
+        yield* trackDispatch(state, card.id, threadId, "implementation");
       }).pipe(orRetryLater(state, root, card.id));
 
     const startReview = (
@@ -536,7 +559,7 @@ export const AgentBoardRunnerLive = Layer.effect(
             now,
           ),
         );
-        state.tracked.set(card.id, { threadId, role: "review" });
+        yield* trackDispatch(state, card.id, threadId, "review");
       }).pipe(orRetryLater(state, root, card.id));
 
     /**
@@ -573,6 +596,7 @@ export const AgentBoardRunnerLive = Layer.effect(
             now,
           ),
         );
+        yield* trackDispatch(state, card.id, ThreadId.make(runId), "review");
       }).pipe(orRetryLater(state, root, card.id));
 
     // ---- turn completion ---------------------------------------------------
@@ -757,7 +781,13 @@ export const AgentBoardRunnerLive = Layer.effect(
             continue;
           }
           const threadId = ThreadId.make(runId);
-          const tracked: Tracked = { threadId, role };
+          // Reuse the live entry so a dispatch this tick just made keeps its
+          // `pendingTurnSince`; only a genuinely different worker replaces it.
+          const previous = state.tracked.get(card.id);
+          const tracked: Tracked =
+            previous !== undefined && previous.threadId === threadId && previous.role === role
+              ? previous
+              : { threadId, role };
           state.tracked.set(card.id, tracked);
 
           // A failed read is transient; only a `None` means the thread is gone.
@@ -782,13 +812,27 @@ export const AgentBoardRunnerLive = Layer.effect(
             continue;
           }
           const session = shell.session;
-          if (
+          const settled =
             session !== null &&
             session.activeTurnId === null &&
-            SETTLED_STATUSES.has(session.status)
-          ) {
-            yield* onTurnSettled(state, root, card, tracked, session);
+            SETTLED_STATUSES.has(session.status);
+          // The session now reflects the dispatch, so the marker has done its job.
+          if (session !== null && !settled) tracked.pendingTurnSince = undefined;
+          if (!settled || session === null) continue;
+          if (tracked.pendingTurnSince !== undefined) {
+            const millis = yield* Clock.currentTimeMillis;
+            const sessionAt = Date.parse(session.updatedAt);
+            // Only a session older than the dispatch can be the previous turn's.
+            const stale = Number.isFinite(sessionAt) && sessionAt < tracked.pendingTurnSince;
+            if (
+              stale &&
+              millis - tracked.pendingTurnSince < state.workflow.config.polling.intervalMs * 4
+            ) {
+              continue;
+            }
+            tracked.pendingTurnSince = undefined;
           }
+          yield* onTurnSettled(state, root, card, tracked, session);
         }
 
         board = (yield* boards.load({ cwd: root })).board;

@@ -54,6 +54,11 @@ export interface Harness {
    * claimed the card and before it records the launch.
    */
   readonly duringNextWorktree: (effect: Effect.Effect<void>) => Effect.Effect<void>;
+  /**
+   * Stop `thread.turn.start` from flipping the session, reproducing the real
+   * gap between dispatching a turn and a reactor publishing `starting`.
+   */
+  readonly deferTurnVisibility: (defer: boolean) => Effect.Effect<void>;
   /** Simulate a provider turn finishing with the given assistant text (or an error). */
   readonly finishTurn: (
     threadId: ThreadId,
@@ -76,6 +81,7 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
     const failThreadShellLookup = yield* Ref.make(false);
     const projectVisible = yield* Ref.make(true);
     const worktreeHook = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    const deferredTurns = yield* Ref.make(false);
 
     const session = (
       threadId: ThreadId,
@@ -128,6 +134,7 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
             );
           }
           if (command.type === "thread.turn.start") {
+            const deferred = yield* Ref.get(deferredTurns);
             yield* Ref.update(threads, (map) => {
               const thread = map.get(command.threadId);
               if (thread === undefined) return map;
@@ -145,7 +152,9 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
                     updatedAt: now,
                   },
                 ],
-                session: session(command.threadId, "running", null, ACTIVE_TURN, now),
+                ...(deferred
+                  ? {}
+                  : { session: session(command.threadId, "running", null, ACTIVE_TURN, now) }),
               } as unknown as OrchestrationThread);
             });
           }
@@ -287,6 +296,7 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
       failNextThreadShellLookup: Ref.set(failThreadShellLookup, true),
       hideProject: Ref.set(projectVisible, false),
       duringNextWorktree: (effect) => Ref.set(worktreeHook, effect),
+      deferTurnVisibility: (defer) => Ref.set(deferredTurns, defer),
       finishTurn,
       layer: Layer.mergeAll(
         Layer.succeed(OrchestrationEngineService, engine),

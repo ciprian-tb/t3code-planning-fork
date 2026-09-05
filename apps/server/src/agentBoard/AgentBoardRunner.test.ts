@@ -516,6 +516,46 @@ describe("AgentBoardRunner", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("does not re-dispatch a turn the session has not caught up with yet", () =>
+    Effect.gen(function* () {
+      const s = yield* setup();
+      yield* s.runner.tick(s.root);
+      const [impl] = yield* s.threadIds();
+      const turnsOnImpl = () =>
+        Ref.get(s.harness.commands).pipe(
+          Effect.map(
+            (cs) =>
+              cs.filter(
+                (c) =>
+                  c.type === "thread.turn.start" &&
+                  (c as { readonly threadId: ThreadId }).threadId === impl,
+              ).length,
+          ),
+        );
+
+      yield* TestClock.adjust(Duration.seconds(1));
+      // No result block, so the settle dispatches a continuation.
+      yield* s.harness.finishTurn(impl!, { text: "still working" });
+      yield* TestClock.adjust(Duration.seconds(1));
+      // `thread.turn.start` reaches the session only once a reactor picks it up.
+      yield* s.harness.deferTurnVisibility(true);
+      yield* s.runner.tick(s.root);
+      expect(yield* turnsOnImpl()).toBe(2);
+      expect((yield* s.card()).runtime.turnCount).toBe(2);
+
+      // A tick inside that window still sees the previous turn's settled
+      // session; it must not dispatch the same continuation again.
+      yield* s.runner.tick(s.root);
+      expect(yield* turnsOnImpl()).toBe(2);
+      expect((yield* s.card()).runtime.turnCount).toBe(2);
+
+      // The wait is bounded, so a dispatch that never lands is retried.
+      yield* TestClock.adjust(Duration.seconds(61));
+      yield* s.runner.tick(s.root);
+      expect(yield* turnsOnImpl()).toBe(3);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("restart recovery re-tracks a Running card from board fields", () =>
     Effect.gen(function* () {
       const s = yield* setup();
