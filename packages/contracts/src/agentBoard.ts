@@ -88,7 +88,14 @@ export const AgentBoardParallelismPlan = Schema.Struct({
 export type AgentBoardParallelismPlan = typeof AgentBoardParallelismPlan.Type;
 
 /** Which agent leg a claimed card is currently in; absent while idle. */
-export const AgentBoardRuntimePhase = Schema.Literals(["implementing", "repairing", "reviewing"]);
+// `manual`: a human ran the card from the UI and owns it; the runner never
+// adopts, continues or stops a manual card.
+export const AgentBoardRuntimePhase = Schema.Literals([
+  "implementing",
+  "repairing",
+  "reviewing",
+  "manual",
+]);
 export type AgentBoardRuntimePhase = typeof AgentBoardRuntimePhase.Type;
 
 export const AgentBoardRuntime = Schema.Struct({
@@ -226,6 +233,13 @@ export type AgentBoardLoadResult = typeof AgentBoardLoadResult.Type;
 export const AgentBoardSaveInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   board: AgentBoardFile,
+  /**
+   * Optimistic concurrency: the `updatedAt` of the board this save was derived
+   * from. When set and the on-disk board has moved past it, the save is
+   * refused so a stale whole-board snapshot cannot revert the runner's
+   * transitions on other cards.
+   */
+  expectedUpdatedAt: Schema.optionalKey(IsoDateTime),
 });
 export type AgentBoardSaveInput = typeof AgentBoardSaveInput.Type;
 
