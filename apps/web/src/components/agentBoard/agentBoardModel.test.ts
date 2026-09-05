@@ -101,6 +101,20 @@ describe("updateCard", () => {
     expect(next.updatedAt).toBe("2026-02-02T00:00:00.000Z");
   });
 
+  // The card dialog builds its draft from a pre-edit card, so the draft carries
+  // the old `updatedAt`. Stamping before the updater would let that value ride
+  // straight back onto the board and make the card look untouched.
+  it("stamps after the updater, so an updater cannot return a stale updatedAt", () => {
+    const source = board([card("CARD-1")]);
+    const next = updateCard(
+      source,
+      "CARD-1" as AgentBoardCardId,
+      (existing) => ({ ...existing, updatedAt: TIMESTAMP }) as AgentBoardCard,
+      "2026-02-02T00:00:00.000Z",
+    );
+    expect(next.cards[0]?.updatedAt).toBe("2026-02-02T00:00:00.000Z");
+  });
+
   it("returns the same board when the card is unknown", () => {
     const source = board([card("CARD-1")]);
     expect(updateCard(source, "MISSING" as AgentBoardCardId, (existing) => existing)).toBe(source);

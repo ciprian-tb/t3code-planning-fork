@@ -463,7 +463,12 @@ export function cardWithPlanningField(
   return rest as AgentBoardCard;
 }
 
-/** Immutable single-card edit; returns the same board reference when nothing matches. */
+/**
+ * Immutable single-card edit; returns the same board reference when nothing
+ * matches. The stamp lands after the updater, exactly as the server's
+ * `patchCard` does, so a card built from a pre-edit draft cannot carry its old
+ * `updatedAt` back onto the board.
+ */
 export function updateCard(
   board: AgentBoardFile,
   cardId: AgentBoardCardId,
@@ -474,7 +479,7 @@ export function updateCard(
   return {
     ...board,
     cards: board.cards.map((card) =>
-      card.id === cardId ? updater({ ...card, updatedAt: timestamp }) : card,
+      card.id === cardId ? { ...updater(card), updatedAt: timestamp } : card,
     ),
     updatedAt: timestamp,
   };
