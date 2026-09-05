@@ -56,10 +56,10 @@ export interface AgentBoardPanelProps {
   readonly environmentId: EnvironmentId;
   readonly workspaceRoot: string | undefined;
   /**
-   * Task 7 wires the actual agent launch here; the panel only claims the card
-   * and adopts whatever board the launcher hands back.
+   * Launches the claimed card; the panel only claims it and adopts whatever
+   * board the launcher hands back.
    */
-  readonly onRunClaimedCard?: (result: AgentBoardClaimResult) => Promise<AgentBoardFile>;
+  readonly onRunClaimedCard: (result: AgentBoardClaimResult) => Promise<AgentBoardFile>;
   readonly className?: string;
 }
 
@@ -86,7 +86,7 @@ export const AgentBoardPanel = memo(function AgentBoardPanel({
     <AgentBoardPanelContent
       environmentId={environmentId}
       workspaceRoot={workspaceRoot}
-      {...(onRunClaimedCard ? { onRunClaimedCard } : {})}
+      onRunClaimedCard={onRunClaimedCard}
       {...(className ? { className } : {})}
     />
   );
@@ -250,17 +250,14 @@ function AgentBoardPanelContent({
         }
 
         try {
-          const launchedBoard = await onRunClaimedCard?.(result.value);
-          setAdoptedBoard(launchedBoard ?? result.value.board);
+          setAdoptedBoard(await onRunClaimedCard(result.value));
           setSelectedCardId(result.value.card.id);
           toastManager.add({
             type: "success",
             // The launcher opens a worktree thread and loads the card's prompt
             // into its composer; the turn starts when the user sends it.
-            title: onRunClaimedCard ? "Card handed to a thread" : "Workspace claimed",
-            description: onRunClaimedCard
-              ? `${result.value.card.title} is ready to send in its own worktree.`
-              : result.value.workspacePath,
+            title: "Card handed to a thread",
+            description: `${result.value.card.title} is ready to send in its own worktree.`,
           });
         } catch (runError) {
           const description = failureMessage(runError, "Could not start the claimed card.");
