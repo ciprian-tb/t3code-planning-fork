@@ -6998,6 +6998,73 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
+  it.effect("refuses to claim a Ready agent board card while the runner is enabled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-board-ready-" });
+      const readyCard = {
+        id: AgentBoardCardId.make("card-ready"),
+        title: "Ready for the runner",
+        priority: 1,
+        dependencies: [],
+        parallelism: { safe: "false" as const, conflictsWith: [], allowedWriteScopes: [] },
+        runtime: { attemptCount: 0, turnCount: 0, repairCycleCount: 0, reviewFindings: [] },
+        state: "Ready" as const,
+        intentBrief: {
+          intent: "ship it",
+          acceptanceCriteria: ["works"],
+          constraints: [],
+          nonGoals: [],
+          openDecisions: [],
+        },
+        createdAt: "2024-01-01T00:00:00.000Z",
+        updatedAt: "2024-01-01T00:00:00.000Z",
+      };
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const { denied, claimed } = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const loaded = yield* client[WS_METHODS.projectsLoadAgentBoard]({
+              cwd: workspaceRoot,
+              createIfMissing: true,
+            });
+            yield* client[WS_METHODS.projectsSaveAgentBoard]({
+              cwd: workspaceRoot,
+              board: { ...loaded.board, cards: [readyCard] },
+            });
+            yield* client[WS_METHODS.projectsSetAgentBoardRunnerEnabled]({
+              cwd: workspaceRoot,
+              enabled: true,
+            });
+            const denied = yield* Effect.flip(
+              client[WS_METHODS.projectsClaimAgentBoardCard]({
+                cwd: workspaceRoot,
+                cardId: readyCard.id,
+              }),
+            );
+            yield* client[WS_METHODS.projectsSetAgentBoardRunnerEnabled]({
+              cwd: workspaceRoot,
+              enabled: false,
+            });
+            const claimed = yield* client[WS_METHODS.projectsClaimAgentBoardCard]({
+              cwd: workspaceRoot,
+              cardId: readyCard.id,
+            });
+            return { denied, claimed };
+          }),
+        ),
+      );
+
+      assert.equal(denied._tag, "AgentBoardFileError");
+      assert.include(denied.message, "runner is enabled");
+      // Turning the runner off hands the card back to the human.
+      assert.equal(claimed.card.state, "Running");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("routes websocket rpc projects.searchEntries excludes gitignored files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

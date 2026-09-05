@@ -2358,13 +2358,23 @@ const makeWsRpcLayer = (
             agentBoard.load({ cwd: input.cwd }).pipe(
               Effect.flatMap(({ board }) => {
                 const card = board.cards.find((candidate) => candidate.id === input.cardId);
-                return card !== undefined && RUNNER_OWNED_STATES.has(card.state)
-                  ? Effect.fail(
-                      new AgentBoardFileError({
-                        message: `The board runner owns ${input.cardId} (${card.state}); it cannot be claimed manually.`,
-                      }),
-                    )
-                  : agentBoard.claim(input);
+                if (card !== undefined && RUNNER_OWNED_STATES.has(card.state)) {
+                  return Effect.fail(
+                    new AgentBoardFileError({
+                      message: `The board runner owns ${input.cardId} (${card.state}); it cannot be claimed manually.`,
+                    }),
+                  );
+                }
+                // A `Ready` card is the runner's next claim; the client's own
+                // check runs against a snapshot up to a poll interval stale.
+                if (board.runner.enabled) {
+                  return Effect.fail(
+                    new AgentBoardFileError({
+                      message: `The board runner is enabled; turn it off to claim ${input.cardId} by hand.`,
+                    }),
+                  );
+                }
+                return agentBoard.claim(input);
               }),
             ),
             { "rpc.aggregate": "workspace" },
