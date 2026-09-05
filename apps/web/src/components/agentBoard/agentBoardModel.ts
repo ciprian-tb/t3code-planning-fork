@@ -260,6 +260,16 @@ export function intentSaveError(card: AgentBoardCard, draft: IntentDraft): strin
   return hasSomethingToLose ? "Intent is required before saving a brief." : null;
 }
 
+/**
+ * The server refuses a save whose `expectedUpdatedAt` no longer matches the
+ * board on disk, and says so with a message starting `Agent board changed`.
+ * That is a stale snapshot rather than a broken write, so the panel reloads and
+ * asks for the edit again instead of reporting a generic save failure.
+ */
+export function isBoardConflictError(message: string): boolean {
+  return message.trimStart().startsWith("Agent board changed");
+}
+
 export function detailDraftFromCard(card: AgentBoardCard): DetailDraft {
   return {
     title: card.title,

@@ -16,6 +16,7 @@ import {
   intentBriefFromDraft,
   intentDraftFromCard,
   intentSaveError,
+  isBoardConflictError,
   newCardForState,
   runnerStatusLine,
   sortCardsForTable,
@@ -343,6 +344,21 @@ describe("intentSaveError", () => {
   it("saves once the intent itself is filled in", () => {
     const ready = card("A", { state: "Ready" });
     expect(intentSaveError(ready, { ...blank, intent: "ship it" })).toBeNull();
+  });
+});
+
+describe("isBoardConflictError", () => {
+  it("recognises the server's stale-snapshot refusal", () => {
+    expect(
+      isBoardConflictError(
+        "Agent board changed on disk since 2026-01-01T00:00:00.000Z; reload and try again.",
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves every other save failure to the generic path", () => {
+    expect(isBoardConflictError("Could not write .t3/agent-board.json: EACCES")).toBe(false);
+    expect(isBoardConflictError("The agent board changed on disk")).toBe(false);
   });
 });
 

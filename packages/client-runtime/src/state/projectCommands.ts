@@ -83,6 +83,9 @@ export function createProjectEnvironmentAtoms<R, E>(
       label: "environment-data:projects:load-agent-board",
       tag: WS_METHODS.projectsLoadAgentBoard,
       staleTimeMs: 5_000,
+      // The runner moves cards on its own, so the board polls like the runner
+      // status does; without it the Kanban sits still until a manual refresh.
+      refreshIntervalMs: 5_000,
       idleTtlMs: 5 * 60_000,
     }),
     getAgentBoardRunnerStatus: createEnvironmentRpcQueryAtomFamily(runtime, {

@@ -49,10 +49,17 @@ export function useRunAgentBoardCard(
       if (!workspaceRoot) throw new Error("Open a project workspace before running a card.");
       const { environmentId } = projectRef;
 
+      // Both saves are derived from the board the claim RPC just returned, so
+      // that is the board they are allowed to overwrite; anything the runner
+      // wrote in between refuses the save instead of being reverted.
       const saveBoard = async (board: AgentBoardFile): Promise<AgentBoardFile> => {
         const saved = await saveAgentBoard({
           environmentId,
-          input: { cwd: workspaceRoot, board },
+          input: {
+            cwd: workspaceRoot,
+            board,
+            expectedUpdatedAt: claim.board.updatedAt,
+          },
         });
         if (saved._tag !== "Success") {
           throw asError(squashAtomCommandFailure(saved), "Could not save the board.");

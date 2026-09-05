@@ -32,6 +32,7 @@ import {
   addCard,
   buildExecutionTree,
   cardWithState,
+  isBoardConflictError,
   newCardForState,
   updateCard,
 } from "./agentBoardModel";
@@ -122,10 +123,12 @@ function AgentBoardPanelContent({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // A fresh server load wins over the locally adopted board.
+  // A fresh server load wins over the locally adopted board — except while a
+  // save is in flight. The board a poll lands with mid-save predates that save,
+  // so adopting it would blink the user's own edit away and back again.
   if (loadedBoard !== lastLoadedBoard) {
     setLastLoadedBoard(loadedBoard);
-    setAdoptedBoard(null);
+    if (!busy) setAdoptedBoard(null);
   }
 
   const board = adoptedBoard ?? loadedBoard;
@@ -137,6 +140,11 @@ function AgentBoardPanelContent({
       ? failureMessage(Cause.squash(boardResult.cause), "Could not load board.")
       : null;
 
+  // Every save ships the whole board, so it has to say which board it was
+  // derived from: the one on screen before this edit, never `nextBoard`, whose
+  // `updatedAt` the edit has already stamped. Without it a save made while the
+  // runner works reverts the runner's transitions on every other card.
+  const expectedUpdatedAt = board?.updatedAt;
   const commitBoard = useCallback(
     (nextBoard: AgentBoardFile) => {
       setAdoptedBoard(nextBoard);
@@ -145,7 +153,11 @@ function AgentBoardPanelContent({
       void (async () => {
         const result = await saveAgentBoard({
           environmentId,
-          input: { cwd: workspaceRoot, board: nextBoard },
+          input: {
+            cwd: workspaceRoot,
+            board: nextBoard,
+            ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
+          },
         });
         setBusy(false);
         if (result._tag === "Success") {
@@ -153,17 +165,31 @@ function AgentBoardPanelContent({
           return;
         }
         if (isAtomCommandInterrupted(result)) return;
-        const description = failureMessage(
-          squashAtomCommandFailure(result),
-          "Could not save board.",
-        );
-        setError(description);
+        const failure = failureMessage(squashAtomCommandFailure(result), "Could not save board.");
+        if (isBoardConflictError(failure)) {
+          // The edit is gone either way; reload so the retry starts from the
+          // board the runner actually left behind.
+          setAdoptedBoard(null);
+          refreshBoard();
+          const description =
+            "The board changed while you were editing; your change was not saved. Try again.";
+          setError(description);
+          toastManager.add(
+            stackedThreadToast({ type: "error", title: "Board changed", description }),
+          );
+          return;
+        }
+        setError(failure);
         toastManager.add(
-          stackedThreadToast({ type: "error", title: "Board save failed", description }),
+          stackedThreadToast({
+            type: "error",
+            title: "Board save failed",
+            description: failure,
+          }),
         );
       })();
     },
-    [environmentId, saveAgentBoard, workspaceRoot],
+    [environmentId, expectedUpdatedAt, refreshBoard, saveAgentBoard, workspaceRoot],
   );
 
   const editCard = useCallback(
