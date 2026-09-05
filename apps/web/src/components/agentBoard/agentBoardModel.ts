@@ -270,6 +270,20 @@ export function isBoardConflictError(message: string): boolean {
   return message.trimStart().startsWith("Agent board changed");
 }
 
+/**
+ * Why the Run button will not claim this card, or null to go ahead.
+ *
+ * Both refusals are the friendly layer, not the safety layer: the server
+ * refuses a claim on a non-`Ready` card and refuses any claim at all while the
+ * runner is enabled. This just says so before the round trip, in words.
+ */
+export function runCardError(card: AgentBoardCard, board: AgentBoardFile): string | null {
+  if (card.state !== "Ready")
+    return `Only a Ready card can be run by hand — ${card.id} is ${card.state}.`;
+  if (board.runner.enabled) return "The runner is enabled — turn it off to run a card by hand.";
+  return null;
+}
+
 export function detailDraftFromCard(card: AgentBoardCard): DetailDraft {
   return {
     title: card.title,

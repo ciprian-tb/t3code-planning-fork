@@ -34,6 +34,7 @@ import {
   cardWithState,
   isBoardConflictError,
   newCardForState,
+  runCardError,
   updateCard,
 } from "./agentBoardModel";
 import { Badge } from "../ui/badge";
@@ -218,17 +219,12 @@ function AgentBoardPanelContent({
     [board, commitBoard],
   );
 
-  /** `Run` is Ready-only: claiming any other state would fight the runner. */
   const runCard = useCallback(
     (card: AgentBoardCard) => {
-      if (card.state !== "Ready") return;
-      // The runner owns the board while it is enabled. A manual claim would sit
-      // `Running` with no `implementationRunId` until the user presses send, and
-      // the runner's adopt loop would take that for a card whose thread died,
-      // park it `Diagnosing`, then re-launch its own agent into the same
-      // worktree. Let the runner do it, or turn the runner off.
-      if (board?.runner.enabled) {
-        setError("The runner is enabled — turn it off to run a card by hand.");
+      if (!board) return;
+      const refusal = runCardError(card, board);
+      if (refusal) {
+        setError(refusal);
         return;
       }
       setBusy(true);
@@ -276,14 +272,7 @@ function AgentBoardPanelContent({
         }
       })();
     },
-    [
-      board?.runner.enabled,
-      claimAgentBoardCard,
-      environmentId,
-      onRunClaimedCard,
-      refreshBoard,
-      workspaceRoot,
-    ],
+    [board, claimAgentBoardCard, environmentId, onRunClaimedCard, refreshBoard, workspaceRoot],
   );
 
   const openCardDetails = useCallback((card: AgentBoardCard) => {

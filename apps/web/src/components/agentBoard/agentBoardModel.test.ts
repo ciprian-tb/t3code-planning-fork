@@ -18,6 +18,7 @@ import {
   intentSaveError,
   isBoardConflictError,
   newCardForState,
+  runCardError,
   runnerStatusLine,
   sortCardsForTable,
   updateCard,
@@ -359,6 +360,31 @@ describe("isBoardConflictError", () => {
   it("leaves every other save failure to the generic path", () => {
     expect(isBoardConflictError("Could not write .t3/agent-board.json: EACCES")).toBe(false);
     expect(isBoardConflictError("The agent board changed on disk")).toBe(false);
+  });
+});
+
+describe("runCardError", () => {
+  const ready = card("CARD-1", { state: "Ready" });
+  const runnerOn = (file: AgentBoardFile): AgentBoardFile => ({
+    ...file,
+    runner: { ...file.runner, enabled: true },
+  });
+
+  it("lets a Ready card run while the runner is off", () => {
+    expect(runCardError(ready, board([ready]))).toBeNull();
+  });
+
+  it("refuses a card that is not Ready and names the state it is in", () => {
+    const draft = card("CARD-1");
+    expect(runCardError(draft, board([draft]))).toBe(
+      "Only a Ready card can be run by hand — CARD-1 is Draft.",
+    );
+  });
+
+  it("refuses every card while the runner is enabled", () => {
+    expect(runCardError(ready, runnerOn(board([ready])))).toBe(
+      "The runner is enabled — turn it off to run a card by hand.",
+    );
   });
 });
 
