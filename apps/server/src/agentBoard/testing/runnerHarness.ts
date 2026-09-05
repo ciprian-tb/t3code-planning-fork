@@ -49,6 +49,11 @@ export interface Harness {
   readonly failNextThreadShellLookup: Effect.Effect<void>;
   /** Drop the project from the snapshot, as deleting it would. */
   readonly hideProject: Effect.Effect<void>;
+  /**
+   * Run `effect` once inside the next `createWorktree`, i.e. after the runner
+   * claimed the card and before it records the launch.
+   */
+  readonly duringNextWorktree: (effect: Effect.Effect<void>) => Effect.Effect<void>;
   /** Simulate a provider turn finishing with the given assistant text (or an error). */
   readonly finishTurn: (
     threadId: ThreadId,
@@ -70,6 +75,7 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
     const failProjectLookup = yield* Ref.make(false);
     const failThreadShellLookup = yield* Ref.make(false);
     const projectVisible = yield* Ref.make(true);
+    const worktreeHook = yield* Ref.make<Effect.Effect<void>>(Effect.void);
 
     const session = (
       threadId: ThreadId,
@@ -215,9 +221,12 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
         readonly newRefName?: string | undefined;
         readonly path: string | null;
       }) =>
-        Effect.succeed({
-          worktree: { path: input.path ?? "/tmp/worktree", refName: input.newRefName ?? "HEAD" },
-        }),
+        Ref.getAndSet(worktreeHook, Effect.void).pipe(
+          Effect.flatMap((hook) => hook),
+          Effect.as({
+            worktree: { path: input.path ?? "/tmp/worktree", refName: input.newRefName ?? "HEAD" },
+          }),
+        ),
     } as never);
 
     const finishTurn: Harness["finishTurn"] = (threadId, result) =>
@@ -277,6 +286,7 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
       failNextProjectLookup: Ref.set(failProjectLookup, true),
       failNextThreadShellLookup: Ref.set(failThreadShellLookup, true),
       hideProject: Ref.set(projectVisible, false),
+      duringNextWorktree: (effect) => Ref.set(worktreeHook, effect),
       finishTurn,
       layer: Layer.mergeAll(
         Layer.succeed(OrchestrationEngineService, engine),

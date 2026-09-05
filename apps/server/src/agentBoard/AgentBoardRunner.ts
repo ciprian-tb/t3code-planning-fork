@@ -173,6 +173,12 @@ export const AgentBoardRunnerLive = Layer.effect(
 
     // ---- board helpers -----------------------------------------------------
 
+    /**
+     * One critical section: a `load` then a `save` lets a client write slot in
+     * between and lose. A card the user has already dragged out of a runner
+     * state (or out of `Ready`, mid-launch) is left exactly as they left it —
+     * `launch` still tracks the thread, so the next tick's drag-out pass stops it.
+     */
     const saveCard = (
       root: string,
       cardId: AgentBoardCardId,
@@ -180,9 +186,16 @@ export const AgentBoardRunnerLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         const now = yield* nowIso;
-        const { board } = yield* boards.load({ cwd: root });
-        const next = patchCard(board, cardId, (card) => patch(card, now), now);
-        return (yield* boards.save({ cwd: root, board: next })).board;
+        const saved = yield* boards.modify(root, (board) => {
+          const card = board.cards.find((candidate) => candidate.id === cardId);
+          if (
+            card === undefined ||
+            !(RUNNER_OWNED_STATES.has(card.state) || card.state === "Ready")
+          )
+            return board;
+          return patchCard(board, cardId, (candidate) => patch(candidate, now), now);
+        });
+        return saved.board;
       });
 
     const needsDecision = (
@@ -788,25 +801,6 @@ export const AgentBoardRunnerLive = Layer.effect(
 
         for (const card of selectClaimableCards(board, state.workflow.config)) {
           yield* launch(state, root, card.id);
-        }
-
-        if (state.tracked.size > 0) {
-          const fresh = (yield* boards.load({ cwd: root })).board;
-          const beat = yield* nowIso;
-          yield* boards.save({
-            cwd: root,
-            board: {
-              ...fresh,
-              cards: fresh.cards.map((card) =>
-                state.tracked.has(card.id)
-                  ? (Object.assign({}, card, {
-                      runtime: { ...card.runtime, lastHeartbeatAt: beat },
-                    }) as AgentBoardCard)
-                  : card,
-              ),
-              updatedAt: beat,
-            },
-          });
         }
       });
 

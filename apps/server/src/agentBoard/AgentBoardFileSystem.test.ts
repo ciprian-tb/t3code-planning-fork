@@ -252,6 +252,69 @@ describe("AgentBoardFileSystem", () => {
     ),
   );
 
+  it.effect("refuses a save whose expectedUpdatedAt no longer matches disk", () =>
+    run(
+      Effect.gen(function* () {
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+        const first = yield* service.save({ cwd, board: readyBoardWith(cwd, "card-1") });
+
+        // Someone else moved the board on.
+        const moved = decodeBoard({
+          ...readyBoardWith(cwd, "card-1", "Written by the runner"),
+          updatedAt: "2026-08-30T11:00:00.000Z",
+        });
+        yield* service.save({ cwd, board: moved });
+
+        const stale = yield* Effect.flip(
+          service.save({
+            cwd,
+            board: readyBoardWith(cwd, "card-1", "Stale panel snapshot"),
+            expectedUpdatedAt: first.board.updatedAt,
+          }),
+        );
+        expect(stale.message.startsWith("Agent board changed")).toBe(true);
+        expect(stale.message).toContain("Reload");
+        // Nothing was written.
+        expect((yield* service.load({ cwd })).board.cards[0]?.title).toBe("Written by the runner");
+
+        // The matching value goes through, and so does a save without the field.
+        const fresh = yield* service.save({
+          cwd,
+          board: readyBoardWith(cwd, "card-1", "Fresh panel snapshot"),
+          expectedUpdatedAt: moved.updatedAt,
+        });
+        expect(fresh.board.cards[0]?.title).toBe("Fresh panel snapshot");
+        const blind = yield* service.save({ cwd, board: readyBoardWith(cwd, "card-1", "Blind") });
+        expect(blind.board.cards[0]?.title).toBe("Blind");
+      }),
+    ),
+  );
+
+  it.effect("fails a save over an unreadable board instead of resetting the runner block", () =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+        yield* service.save({ cwd, board: readyBoardWith(cwd, "card-1") });
+        yield* service.setRunnerEnabled({ cwd, enabled: true });
+
+        const boardPath = path.join(cwd, AGENT_BOARD_RELATIVE_PATH);
+        yield* fs.writeFileString(boardPath, "{ not json");
+
+        // Treating the unreadable board as "absent" would drop `runner.enabled`.
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(service.save({ cwd, board: readyBoardWith(cwd, "card-1") })),
+          ),
+        ).toBe(true);
+        expect(yield* fs.readFileString(boardPath)).toBe("{ not json");
+      }),
+    ),
+  );
+
   it.effect("claims a Ready card into a workspace directory", () =>
     run(
       Effect.gen(function* () {

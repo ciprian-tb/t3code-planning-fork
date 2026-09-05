@@ -412,6 +412,33 @@ describe("AgentBoardRunner", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("a card dragged to Canceled mid-launch stays Canceled and its thread is stopped", () =>
+    Effect.gen(function* () {
+      const s = yield* setup();
+      // Runs after the claim, before the `launched` save: exactly the window a
+      // `git worktree add` leaves open for the user to drag the card away.
+      yield* s.harness.duringNextWorktree(
+        s
+          .patchBoard((board) => ({
+            ...board,
+            cards: board.cards.map((c) => ({ ...c, state: "Canceled" as const })),
+          }))
+          .pipe(Effect.orDie),
+      );
+      yield* s.runner.tick(s.root);
+
+      const canceled = yield* s.card();
+      expect(canceled.state).toBe("Canceled");
+      expect(canceled.runtime.phase).toBeUndefined();
+
+      // The thread the runner started is still tracked, so the next tick stops it.
+      yield* s.runner.tick(s.root);
+      const types = (yield* Ref.get(s.harness.commands)).map((c) => c.type);
+      expect(types.slice(-2)).toEqual(["thread.turn.interrupt", "thread.session.stop"]);
+      expect((yield* s.runner.status(s.root)).activeCardIds).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("restart recovery re-tracks a Running card from board fields", () =>
     Effect.gen(function* () {
       const s = yield* setup();

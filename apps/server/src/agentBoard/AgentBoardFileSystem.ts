@@ -46,6 +46,15 @@ export class AgentBoardFileSystem extends Context.Service<
     readonly save: (
       input: AgentBoardSaveInput,
     ) => Effect.Effect<AgentBoardSaveResult, AgentBoardFileError>;
+    /**
+     * Read-modify-write under a single permit. Server-internal (never an RPC):
+     * a `load` then a `save` are two critical sections and a client write can
+     * slot between them.
+     */
+    readonly modify: (
+      cwd: string,
+      f: (board: AgentBoardFile) => AgentBoardFile,
+    ) => Effect.Effect<AgentBoardSaveResult, AgentBoardFileError>;
     /** Flip `runner.enabled` on disk; the only writer of the operator-owned runner block. */
     readonly setRunnerEnabled: (
       input: AgentBoardSetRunnerEnabledInput,
@@ -244,30 +253,51 @@ export const make = Effect.gen(function* () {
     mutations.withPermit(
       Effect.gen(function* () {
         const { projectRoot, absolutePath } = yield* resolveBoardPath(input.cwd);
-        // A missing (or unreadable) board leaves `runner` off the object so the
-        // schema default fills it; saving over a corrupt board still works.
-        const onDisk = yield* readBoard({ cwd: input.cwd }).pipe(Effect.orElseSucceed(() => null));
+        // Only a *missing* board leaves `runner` off the object so the schema
+        // default fills it. A corrupt or unreadable one fails the save: swallowing
+        // that read would silently reset `runner.enabled` from a client snapshot.
+        const exists = yield* fileSystem
+          .exists(absolutePath)
+          .pipe(
+            Effect.mapError((cause) =>
+              boardError(`Failed to read agent board at ${absolutePath}.`, cause),
+            ),
+          );
+        const onDisk = exists ? (yield* readBoard({ cwd: input.cwd })).board : null;
+        if (
+          input.expectedUpdatedAt !== undefined &&
+          onDisk !== null &&
+          onDisk.updatedAt !== input.expectedUpdatedAt
+        ) {
+          // Prefix is load-bearing: clients match on it to offer a reload.
+          return yield* boardError(
+            `Agent board changed on disk since this view loaded it (expected ${input.expectedUpdatedAt}, found ${onDisk.updatedAt}). Reload the board and try again.`,
+          );
+        }
         const { runner: _clientRunner, ...clientBoard } = input.board;
         const board = yield* persistBoard(
           projectRoot,
           absolutePath,
-          onDisk === null ? clientBoard : { ...clientBoard, runner: onDisk.board.runner },
+          onDisk === null ? clientBoard : { ...clientBoard, runner: onDisk.runner },
         );
         return { board, relativePath: AGENT_BOARD_RELATIVE_PATH } satisfies AgentBoardSaveResult;
       }),
     );
 
-  const setRunnerEnabled: AgentBoardFileSystem["Service"]["setRunnerEnabled"] = (input) =>
+  const modify: AgentBoardFileSystem["Service"]["modify"] = (cwd, f) =>
     mutations.withPermit(
       Effect.gen(function* () {
-        const loaded = yield* readBoard({ cwd: input.cwd });
-        const board = yield* persistBoard(loaded.projectRoot, loaded.absolutePath, {
-          ...loaded.board,
-          runner: { ...loaded.board.runner, enabled: input.enabled },
-        });
+        const loaded = yield* readBoard({ cwd });
+        const board = yield* persistBoard(loaded.projectRoot, loaded.absolutePath, f(loaded.board));
         return { board, relativePath: AGENT_BOARD_RELATIVE_PATH } satisfies AgentBoardSaveResult;
       }),
     );
+
+  const setRunnerEnabled: AgentBoardFileSystem["Service"]["setRunnerEnabled"] = (input) =>
+    modify(input.cwd, (board) => ({
+      ...board,
+      runner: { ...board.runner, enabled: input.enabled },
+    }));
 
   const claim: AgentBoardFileSystem["Service"]["claim"] = (input) =>
     mutations.withPermit(
@@ -335,7 +365,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  return AgentBoardFileSystem.of({ load, save, setRunnerEnabled, claim });
+  return AgentBoardFileSystem.of({ load, save, modify, setRunnerEnabled, claim });
 });
 
 export const AgentBoardFileSystemLive = Layer.effect(AgentBoardFileSystem, make);
