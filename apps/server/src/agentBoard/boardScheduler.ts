@@ -65,9 +65,10 @@ export function retryDelayMs(attemptCount: number, maxBackoffMs: number): number
 export type Transition =
   | { kind: "launched"; threadId: RuntimeSessionId; branchName?: string }
   | { kind: "continued" }
-  | { kind: "review-started"; threadId: RuntimeSessionId }
+  | { kind: "review-started"; threadId: RuntimeSessionId; summary?: string }
   | { kind: "repair"; findings: ReadonlyArray<string> }
   | { kind: "retry-later"; error: string; nextRetryAt: string }
+  | { kind: "review-failed"; error: string; nextRetryAt: string }
   | { kind: "success"; state: "Review" | "Done"; summary: string }
   | { kind: "needs-decision"; question: string; summary?: string }
   | { kind: "blocked"; error: string };
@@ -108,6 +109,9 @@ export function transition(card: AgentBoardCard, t: Transition, now: string): Ag
         phase: "reviewing",
         reviewRunId: t.threadId,
         turnCount: rt.turnCount + 1,
+        // Kept on the card so a replacement reviewer still gets the
+        // implementer's summary after the first one dies.
+        ...(t.summary === undefined ? {} : { lastResultSummary: t.summary }),
       });
     case "repair":
       return set("Diagnosing", {
@@ -126,6 +130,19 @@ export function transition(card: AgentBoardCard, t: Transition, now: string): Ag
         currentError: t.error,
         nextRetryAt: t.nextRetryAt,
       });
+    case "review-failed": {
+      // The reviewer's own session died: drop its thread and stay in the
+      // reviewing phase, so the retry pass starts a fresh reviewer instead of
+      // telling the implementer its turn failed.
+      const { reviewRunId: _dead, ...withoutReviewer } = rt;
+      return set("Diagnosing", {
+        ...withoutReviewer,
+        phase: "reviewing",
+        attemptCount: rt.attemptCount + 1,
+        currentError: t.error,
+        nextRetryAt: t.nextRetryAt,
+      });
+    }
     case "success":
       return set(t.state, { ...rt, reviewFindings: [], lastResultSummary: t.summary });
     case "needs-decision":

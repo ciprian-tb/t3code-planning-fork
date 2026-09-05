@@ -473,6 +473,49 @@ describe("AgentBoardRunner", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("a dead review session gets a fresh reviewer, not a worker continuation", () =>
+    Effect.gen(function* () {
+      const s = yield* setup();
+      yield* s.runner.tick(s.root);
+      const [impl] = yield* s.threadIds();
+      yield* s.harness.finishTurn(impl!, { text: DONE });
+      yield* s.runner.tick(s.root);
+      const [, review] = yield* s.threadIds();
+
+      yield* s.harness.finishTurn(review!, { error: "reviewer crashed" });
+      yield* s.runner.tick(s.root);
+      let card = yield* s.card();
+      expect(card.state).toBe("Diagnosing");
+      expect(card.runtime.phase).toBe("reviewing");
+      // The errored reviewer is dropped, not handed to the retry pass.
+      expect(card.runtime.reviewRunId).toBeUndefined();
+      const stopped = (yield* Ref.get(s.harness.commands)).filter(
+        (c) => c.type === "thread.session.stop",
+      );
+      expect(stopped.map((c) => (c as { readonly threadId: ThreadId }).threadId)).toEqual([review]);
+
+      yield* TestClock.adjust(Duration.seconds(5));
+      yield* s.runner.tick(s.root);
+      card = yield* s.card();
+      expect(card.state).toBe("Reviewing");
+      const ids = yield* s.threadIds();
+      expect(ids).toHaveLength(3);
+      expect(card.runtime.reviewRunId).toBe(ids[2]);
+      // The implementation thread was never told its turn failed.
+      const implTurns = (yield* Ref.get(s.harness.commands)).filter(
+        (c) =>
+          c.type === "thread.turn.start" &&
+          (c as { readonly threadId: ThreadId }).threadId === impl,
+      );
+      expect(implTurns).toHaveLength(1);
+      // The replacement reviewer still gets the implementer's summary.
+      const lastTurn = (yield* Ref.get(s.harness.commands)).at(-1) as {
+        readonly message: { readonly text: string };
+      };
+      expect(lastTurn.message.text).toContain("implemented");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("restart recovery re-tracks a Running card from board fields", () =>
     Effect.gen(function* () {
       const s = yield* setup();

@@ -228,6 +228,7 @@ export const AgentBoardRunnerLive = Layer.effect(
       root: string,
       cardId: AgentBoardCardId,
       error: string,
+      options?: { readonly review?: boolean },
     ) =>
       Effect.gen(function* () {
         const { board } = yield* boards.load({ cwd: root });
@@ -261,7 +262,11 @@ export const AgentBoardRunnerLive = Layer.effect(
         yield* saveCard(root, cardId, (candidate, now) =>
           transition(
             candidate,
-            { kind: "retry-later", error: text(error, "unknown failure"), nextRetryAt },
+            {
+              kind: options?.review === true ? "review-failed" : "retry-later",
+              error: text(error, "unknown failure"),
+              nextRetryAt,
+            },
             now,
           ),
         );
@@ -527,7 +532,7 @@ export const AgentBoardRunnerLive = Layer.effect(
         yield* saveCard(root, card.id, (candidate, now) =>
           transition(
             candidate,
-            { kind: "review-started", threadId: RuntimeSessionId.make(threadId) },
+            { kind: "review-started", threadId: RuntimeSessionId.make(threadId), summary },
             now,
           ),
         );
@@ -683,12 +688,14 @@ export const AgentBoardRunnerLive = Layer.effect(
     ) =>
       Effect.gen(function* () {
         if (session.status !== "ready") {
-          return yield* retryLater(
-            state,
-            root,
-            card.id,
-            session.lastError ?? `Provider session ${session.status}`,
-          );
+          const error = session.lastError ?? `Provider session ${session.status}`;
+          if (tracked.role === "review") {
+            // A dead reviewer is not resumable, and the implementer's turn did
+            // not fail: stop it and let the retry pass start a fresh review.
+            yield* stopThread(tracked.threadId);
+            return yield* retryLater(state, root, card.id, error, { review: true });
+          }
+          return yield* retryLater(state, root, card.id, error);
         }
         const assistantText = yield* lastAssistantText(tracked.threadId);
         yield* tracked.role === "review"
@@ -791,6 +798,17 @@ export const AgentBoardRunnerLive = Layer.effect(
           // The web parks a failed manual run Diagnosing too; it stays the human's.
           if (isManual(card)) continue;
           if (card.runtime.nextRetryAt !== undefined && card.runtime.nextRetryAt > now) continue;
+          // Only `review-failed` parks a Diagnosing card still in the reviewing
+          // phase; it needs a new reviewer, not a continuation of the worker.
+          if (card.runtime.phase === "reviewing") {
+            yield* startReview(
+              state,
+              root,
+              card,
+              card.runtime.lastResultSummary ?? "(the previous review turn recorded no summary)",
+            );
+            continue;
+          }
           // A card that failed before its thread existed has nothing to
           // continue; re-launch it (plan §8) instead of parking it.
           if (card.runtime.implementationRunId === undefined) {
