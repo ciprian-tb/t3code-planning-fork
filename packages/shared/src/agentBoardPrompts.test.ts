@@ -136,4 +136,41 @@ describe("parsers", () => {
       ),
     ).toBe(true);
   });
+
+  // Observed in the integrated pass: a reviewer emitted `"question":""` three
+  // turns running. Every optional string is a `TrimmedNonEmptyString`, so the
+  // blank made the whole block undecodable, the runner reported "no block", and
+  // the card burned turns re-prompting an agent that had already answered.
+  it("reads a blank optional string as an absent field", () => {
+    const review = parseReviewResult(
+      '```agent-board-result\n{"outcome":"approved","summary":"verified","findings":[],"question":""}\n```',
+    );
+    expect(Option.isSome(review)).toBe(true);
+    expect(Option.getOrThrow(review).question).toBeUndefined();
+
+    const worker = parseWorkerResult(
+      '```agent-board-result\n{"outcome":"done","summary":"shipped","question":"   "}\n```',
+    );
+    expect(Option.isSome(worker)).toBe(true);
+    expect(Option.getOrThrow(worker).question).toBeUndefined();
+  });
+
+  it("still rejects a blank value the outcome makes mandatory", () => {
+    // `needs-decision` requires a question; dropping the blank must not smuggle
+    // one past the check, it must leave the block invalid.
+    expect(
+      Option.isNone(
+        parseWorkerResult(
+          '```agent-board-result\n{"outcome":"needs-decision","summary":"x","question":""}\n```',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps a non-blank optional string", () => {
+    const worker = parseWorkerResult(
+      '```agent-board-result\n{"outcome":"needs-decision","summary":"x","question":"A or B?"}\n```',
+    );
+    expect(Option.getOrThrow(worker).question).toBe("A or B?");
+  });
 });

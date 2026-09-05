@@ -586,7 +586,10 @@ export const AgentBoardRunnerLive = Layer.effect(
           threadId: ThreadId.make(runId),
           modelSelection: context.modelSelection,
           prompt:
-            "Your last message had no agent-board-result block. Finish the review and end with exactly one block.",
+            // "no block" and "block that failed to decode" are indistinguishable
+            // from an Option, so the re-prompt names both and restates the shape
+            // rather than sending the agent looking for a block it did emit.
+            "Your last message had no valid agent-board-result block: either it was missing, or its JSON did not match the protocol. End your next message with exactly one ```agent-board-result``` block whose outcome is approved, changes-requested or needs-decision. Omit optional fields you have nothing to say for rather than sending them empty.",
           titleSeed: reviewThreadTitle(card),
         });
         yield* saveCard(root, card.id, (candidate, now) =>

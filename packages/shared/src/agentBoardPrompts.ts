@@ -157,11 +157,34 @@ const lastResultBlock = (text: string): Option.Option<string> => {
 };
 
 // `fromLenientJson` tolerates the trailing commas and comments models emit.
-const decodeWorker = Schema.decodeUnknownOption(fromLenientJson(AgentBoardWorkerResult));
-const decodeReview = Schema.decodeUnknownOption(fromLenientJson(AgentBoardReviewResult));
+const decodeJson = Schema.decodeUnknownOption(fromLenientJson(Schema.Unknown));
+const decodeWorker = Schema.decodeUnknownOption(AgentBoardWorkerResult);
+const decodeReview = Schema.decodeUnknownOption(AgentBoardReviewResult);
 
-export const parseWorkerResult = (text: string): Option.Option<AgentBoardWorkerResult> =>
-  Option.flatMap(lastResultBlock(text), decodeWorker);
+/**
+ * Models spell "no value" as `""` for the optional string fields, but every one
+ * of them is a `TrimmedNonEmptyString`, so an empty string makes the WHOLE
+ * block undecodable. The runner then reports "no result block", the agent
+ * cannot see what is wrong, and the card re-prompts until `max_turns`.
+ * `optionalKey` already means absent, so dropping the blank key is the same
+ * statement in a shape the schema accepts.
+ */
+const withoutBlankFields = (value: unknown): unknown => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => typeof entry !== "string" || entry.trim() !== ""),
+  );
+};
 
-export const parseReviewResult = (text: string): Option.Option<AgentBoardReviewResult> =>
-  Option.flatMap(lastResultBlock(text), decodeReview);
+const parseBlock =
+  <A>(decode: (input: unknown) => Option.Option<A>) =>
+  (text: string): Option.Option<A> =>
+    Option.flatMap(Option.flatMap(lastResultBlock(text), decodeJson), (json) =>
+      decode(withoutBlankFields(json)),
+    );
+
+export const parseWorkerResult: (text: string) => Option.Option<AgentBoardWorkerResult> =
+  parseBlock(decodeWorker);
+
+export const parseReviewResult: (text: string) => Option.Option<AgentBoardReviewResult> =
+  parseBlock(decodeReview);
