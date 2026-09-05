@@ -107,17 +107,22 @@ What shipped:
 
 Proof:
 
-- Board-scoped suites: **276 tests across 10 files**, all passing, via
-  `vp test run` over the contracts, shared, server `agentBoard/`,
-  client-runtime, and web board tests.
-- `vp run --filter @t3tools/contracts --filter @t3tools/shared
-  --filter @t3tools/client-runtime --filter t3 --filter @t3tools/web typecheck`
-  — **five packages, 0 errors**.
-- `vp lint packages/contracts/src/agentBoard.ts
-  packages/contracts/src/agentBoardWorkflow.ts
-  packages/shared/src/agentBoardPrompts.ts apps/server/src/agentBoard
-  apps/web/src/components/agentBoard` — **clean**.
-- Task record: `docs/agents/tasks/TASK-20260830-agent-board-runner.md`.
+```bash
+# board-scoped suites: 276 tests across 10 files, all passing
+vp test run <the agentBoard tests in contracts, shared, server, client-runtime, web>
+
+# five packages, 0 errors
+vp run --filter @t3tools/contracts --filter @t3tools/shared \
+  --filter @t3tools/client-runtime --filter t3 --filter @t3tools/web typecheck
+
+# clean
+vp lint packages/contracts/src/agentBoard.ts \
+  packages/contracts/src/agentBoardWorkflow.ts \
+  packages/shared/src/agentBoardPrompts.ts \
+  apps/server/src/agentBoard apps/web/src/components/agentBoard
+```
+
+Task record: `docs/agents/tasks/TASK-20260830-agent-board-runner.md`.
 
 ## Slice 6: Board views
 
