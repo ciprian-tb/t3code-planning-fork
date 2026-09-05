@@ -68,17 +68,20 @@ describe("selectClaimableCards", () => {
   });
 
   it("blocks on incomplete or unknown dependencies", () => {
-    const b = board([
-      mk({ id: id("DEP"), state: "Running" }),
-      mk({ id: id("A"), dependencies: [id("DEP")] }),
-      mk({ id: id("B"), dependencies: [id("GHOST")] }),
-    ]);
-    expect(selectClaimableCards(b, cfg2).map((c) => c.id)).toEqual([]);
-    const done = board([
-      mk({ id: id("DEP"), state: "Done" }),
-      mk({ id: id("A"), dependencies: [id("DEP")] }),
-    ]);
-    expect(selectClaimableCards(done, cfg).map((c) => c.id)).toEqual(["A"]);
+    // `DEP` is Draft, so it consumes no slot and both candidates are
+    // parallel-safe: the dependency gate is the only thing that can reject them.
+    const blocked = [
+      mk({ id: id("DEP"), state: "Draft" }),
+      mk({ id: id("A"), dependencies: [id("DEP")], parallelism: SAFE }),
+      mk({ id: id("B"), dependencies: [id("GHOST")], parallelism: SAFE }),
+    ];
+    expect(selectClaimableCards(board(blocked), cfg2).map((c) => c.id)).toEqual([]);
+
+    const done = board(
+      blocked.map((c) => (c.id === "DEP" ? mk({ id: id("DEP"), state: "Done" }) : c)),
+    );
+    // Only `A` unblocks; `B` still points at an id no card has.
+    expect(selectClaimableCards(done, cfg2).map((c) => c.id)).toEqual(["A"]);
   });
 
   it("skips Ready cards without an intent brief", () => {
