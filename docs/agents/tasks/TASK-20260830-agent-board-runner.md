@@ -125,9 +125,49 @@ Changed files: `packages/contracts/src/agentBoard.ts`,
 docs stack (`AGENTS.md`, `WORKFLOW.md`, `PROJECT.md`, `CONTEXT.md`, `PATCH.md`,
 `docs/agents/`, `docs/user/agent-board.md`, `docs/internals/`).
 
-Verification results: the three commands above, as run for this task — **276
+Verification results: the three commands above, as run for this task — **281
 tests across 10 files** passing, **five package typechecks at 0 errors**, and
 the **scoped lint clean**.
+
+Integrated pass: run against a live server (isolated worktree `.t3` home, a
+throwaway git repo, a real provider) with `polling.interval_ms: 5000`,
+`max_turns: 6`, `max_repair_cycles: 2`. All nine scenarios pass; two defects
+found and fixed on the way.
+
+| # | Scenario | Result |
+| --- | --- | --- |
+| 1 | Runner off, `Ready` card left alone | Pass — unchanged over 3.6 polling intervals, and the board file's `updatedAt` never moved, which is the per-transition-only stamping working |
+| 2 | Runner on | Pass — `Ready` → `Running` in ~1 s (the nudge, not a polling wait); worktree `.t3/workspaces/hello-file` on `agent-board/hello-file`; `.t3/workspaces/` added to `.git/info/exclude`, so the project root stays clean |
+| 3 | Worker returns `done` | Pass — card → `Reviewing` with a second, distinct thread on the same card worktree |
+| 4 | Reviewer approves | Pass — card → `Review` (the default `on_success`), summary replaced by the reviewer's |
+| 5 | `WORKFLOW.md` corrupted, then fixed | Pass — header showed `invalid (last-known-good)` with the YAML error and the runner kept going; restoring it returned the header to `WORKFLOW.md` within one interval, no restart |
+| 6 | Card that must ask | Pass — parked at `Needs Decision` with the question; `Answer & re-run` returned it to `Ready`, the same worktree and branch were reused, `attemptCount` incremented, and the answer was appended to the brief's constraints |
+| 7 | `Running` card moved to `Canceled` | Pass — turn interrupted, session `stopped`, runner `active: 0` |
+| 8 | Server restarted mid-run | **Failed, then fixed** (see below). After the fix the card is re-tracked, the leg whose session died is rebuilt, and the card runs through to `Done` |
+| 9 | `Break` | Pass — runner switched off on disk, Planning closed, the route refused a direct URL, chat still worked; releasing `Break` restored the surface and deliberately left the runner off |
+
+Step 8 also proved step 5's reload end to end: the card finished in `Done`
+rather than `Review` because the edited `on_success` was picked up without a
+restart.
+
+Two defects the automated suite had not caught, both fixed with
+mutation-checked tests:
+
+- **A blank optional field made a whole result block undecodable.** A reviewer
+  emitted `"question": ""`; every optional string in the result contracts is a
+  `TrimmedNonEmptyString`, so the block failed to decode and the runner reported
+  "no `agent-board-result` block" — which told the agent nothing, so it re-sent
+  the same block until it had burned four of six turns. Blank values are now
+  read as absent (which is what `optionalKey` already means) without weakening
+  the rules that make a field mandatory, and the re-prompt says the block was
+  missing *or invalid* and restates the shape.
+- **A restart poisoned in-flight cards.** Startup reconciliation marks an
+  orphaned thread, but the runner treated that like a failed turn and kept
+  sending continuations to a conversation the provider had dropped. A fresh card
+  burned every repair cycle in about twelve seconds and parked without running
+  again. A dead session now drops the recorded run id so the card takes the
+  re-launch branch and gets a fresh thread on the same worktree — the same shape
+  `review-failed` already used for a dead reviewer.
 
 Review result: the merged branch is green and carries the fixes from review as
 separate commits (manual-phase cards left entirely to the human; optimistic
@@ -136,11 +176,13 @@ review leg restarted rather than the worker when a reviewer session dies;
 distinct card ids no longer sharing one workspace segment; settles skipped for a
 turn the session has not caught up with).
 
-Remaining gaps: the plan's manual integrated pass over a live project (runner
-off/on, restart mid-run, `Break`, an intentionally corrupted `WORKFLOW.md`) has
-no recorded evidence in this repository, so it is not claimed here. The
-behaviours it would have exercised are covered by
-`apps/server/src/agentBoard/AgentBoardRunner.test.ts`. The product-level gaps
+Remaining gaps: runner threads are not identifiable by an `Implement …` /
+`Review …` prefix in the sidebar — the runner seeds those titles, but thread
+title regeneration usually replaces them. A `Canceled` card disappears from the
+Kanban (there is no column for it) and can only be moved back from the Planning
+table, and it keeps its last `phase`, which nothing reads but which reads oddly.
+An invalid workflow renders its multi-line YAML error inline in the header. The
+product-level gaps
 that were deliberately left open are listed in `PROJECT.md` → What is not built
 and in `docs/agents/symphony-conformance.md` → Current Gaps.
 
