@@ -43,7 +43,8 @@ docs/agents/tasks/*.md          runnable scope and durable proof
 .t3/agent-board.json            live orchestration state
 ```
 
-Only `WORKFLOW.md` is required, and it has defaults for every key.
+`WORKFLOW.md` is optional: a missing file uses defaults for every key. The
+other planning documents supply context rather than required runner config.
 
 ## 4. Specification
 
@@ -92,62 +93,72 @@ all optional, unknown keys dropped at any depth.
 | `workspace.root`              | `.t3/workspaces`       | fixed                                         |
 | `workspace.strategy`          | `per-card`             | fixed                                         |
 | `agent.max_concurrent_agents` | 1                      | 1..8                                          |
-| `agent.max_turns`             | 20                     | worker turns per card before `Needs Decision` |
+| `agent.max_turns`             | 20                     | shared turn count checked before continuation |
 | `agent.max_retry_backoff_ms`  | 300000                 | cap for failure backoff                       |
 | `agent.max_repair_cycles`     | 3                      | review-repair rounds before `Needs Decision`  |
 | `agent.review_agent`          | `fresh`                | `fresh` or `none`                             |
 | `agent.on_success`            | `Review`               | `Review` or `Done`                            |
 
-Missing file: defaults. Invalid file: last-known-good for that project, error
-surfaced in the Planning header, tick continues. Re-read every tick, no
-watcher.
+Missing file: defaults. Invalid file: last-known-good for that project, or
+defaults if none has loaded in this server process. The cache is in memory and
+does not survive a restart. The error is surfaced in the Planning header and
+the tick continues. Re-read every tick, no watcher.
 
 ### 4.3 Selection (pure)
 
-`selectClaimableCards(board, config, now)` in `boardScheduler.ts`:
+`selectClaimableCards(board, config)` in `boardScheduler.ts`:
 
 1. Candidates are `Ready` cards whose every dependency is `Done`. An unknown
    dependency id blocks.
 2. Free slots = `max_concurrent_agents` minus cards in runner-owned states.
-3. With anything already running, a candidate needs `parallelism.safe ==
-"true"` on itself and on every running card, and no `conflictsWith`
-   overlap either way.
+3. Compare each candidate with running cards and cards already picked in this
+   selection. If either group is nonempty, all must have
+   `parallelism.safe == "true"`, with no `conflictsWith` overlap between the
+   candidate and any of those cards in either direction.
 4. Order: `priority` ascending, then `createdAt`, then `id`.
 
-`retryDelayMs(attempt, cap) = min(cap, 1000 * 2 ** (attempt - 1))`.
+`retryDelayMs(attempt, cap) = min(cap, 1000 * 2 ** max(0, attempt - 1))`.
 
 ### 4.4 Per-card state machine
 
 ```
 Ready --claim--> Running[implementing] --turn ok--> parse result
   done             -> review_agent=fresh ? Reviewing[reviewing] (fresh thread) : on_success
-  continue / none  -> turnCount++ ; > max_turns ? Needs Decision : continuation turn
+  continue / none  -> turnCount >= max_turns ? Needs Decision : continuation turn, turnCount++
   needs-decision   -> Needs Decision (currentDecisionQuestion)
   blocked          -> Blocked (currentError)
-  turn error       -> attemptCount++ ; Diagnosing[repairing] ; nextRetryAt = now + backoff
-                      attemptCount > max_repair_cycles ? Needs Decision
+  turn error       -> existing attemptCount > max_repair_cycles ? Needs Decision
+                      : backoff from existing count ; attemptCount++ ; Diagnosing[repairing]
   pending approval or user input on the thread -> Needs Decision
   dead provider session (server restarted)     -> re-launch: fresh thread, same worktree
 
 Reviewing[reviewing] --review ok--> parse review result
   approved           -> on_success ; reviewFindings = []
-  changes-requested  -> repairCycleCount++ ; > max_repair_cycles ? Needs Decision
-                        : Diagnosing[repairing] ; findings sent verbatim to the implementation thread
+  changes-requested  -> repairCycleCount + 1 > max_repair_cycles ? Needs Decision
+                        : repairCycleCount++ ; Diagnosing[repairing] ; findings sent to implementation
   needs-decision     -> Needs Decision
-  none / error       -> same retry rules as implementation
+  none / invalid     -> turnCount >= max_turns ? Needs Decision : nudge same review thread, turnCount++
+  session error      -> retry budget/backoff as above ; clear reviewRunId ; Diagnosing[reviewing]
+                        then start a fresh reviewer on retry
 
 Any runner-owned card the user drags elsewhere -> interrupt turn, stop session, untrack.
-Needs Decision + "Answer & re-run" -> answer appended to constraints as "<q> -> <a>", card back to Ready,
-                                      same worktree and branch reused, attemptCount increments.
+Needs Decision + "Answer & re-run" -> answer appended to constraints as "<q> → <a>", card back to Ready,
+                                      same worktree and branch reused; next claim increments attemptCount.
 ```
+
+`turnCount` includes implementation launches, continuations, review starts,
+and reviewer nudges. `max_turns` gates continuations and nudges against the
+existing count; initial launches and fresh review starts are not gated by it.
 
 ### 4.5 Launch sequence
 
-1. `AgentBoardFileSystem.claim` moves the card to `Running` atomically and
+1. Resolve the project and require `defaultModelSelection`; otherwise park at
+   `Needs Decision` with "Set a default model for this project", without a claim
+   or an attempt-count increment.
+2. `AgentBoardFileSystem.claim` moves the card to `Running` atomically and
    reserves `workspacePath`.
-2. Resolve the project and require `defaultModelSelection`; otherwise park at
-   `Needs Decision` with "Set a default model for this project".
-3. Append `.t3/workspaces/` to `.git/info/exclude` (idempotent).
+3. Best-effort append `.t3/workspaces/` to `.git/info/exclude` (idempotent;
+   errors are logged and ignored).
 4. Reuse `<projectRoot>/.t3/workspaces/<segment>` if it has a `.git`, else
    create a worktree on branch `agent-board/<segment>`. Colliding segments get
    a hash suffix.
@@ -155,22 +166,24 @@ Needs Decision + "Answer & re-run" -> answer appended to constraints as "<q> -> 
 "default"`, the project's default model, the worktree path and branch.
 6. `thread.turn.start` with the implementation prompt from
    `packages/shared/src/agentBoardPrompts.ts`.
-7. Record `implementationRunId`, `phase`, `turnCount`. Any failure in 3 to 6
-   deletes the thread and parks the card in `Diagnosing` with backoff. A
-   `Running` card never exists without an `implementationRunId`, except a
-   manual card.
+7. Record `implementationRunId`, `phase`, `turnCount` after the turn is
+   accepted. A failed turn start deletes the newly created thread. Other
+   launch failures enter the retry path, subject to the attempt budget.
+   Between claim and recording the run id, a `Running` card can have no
+   `implementationRunId`; recovery backs off and re-launches it.
 
 Review mirrors 5 to 7 on a brand-new thread on the same worktree, storing
 `reviewRunId`. The reviewer prompt states it has no implementation context and
-asks for `git diff <base>...HEAD`, acceptance criteria, focused verification,
-scope drift, missing tests, and doc updates.
+asks for a diff stat against the branch point followed by the full diff,
+acceptance criteria, focused verification, scope drift, missing tests, and
+doc updates.
 
 ### 4.6 Tick
 
 One global 1 s sweep; a project ticks when `now - lastTickMillis >=
 polling.intervalMs`. Per project, in order: reload workflow and stamp the
 tick; if `runner.enabled` is false stop tracked threads and return; drop cards
-the user dragged out; adopt every runner-owned card from the board and settle
+the user dragged out; adopt non-manual `Running` and `Reviewing` cards and settle
 finished turns; fire due retries; claim what fits. Every 15 s the project list
 is re-read. All of it runs under one `Semaphore` permit.
 
@@ -308,8 +321,9 @@ and the reader in the runner share one definition.
 
 **D20. Settle suppression is time-bounded, not marker-bounded.** The briefed
 "skip while a turn is pending" suppressed legitimate settles because the
-normal completion path has no intervening tick. Shipped instead: skip only
-while the session's `updatedAt` predates the pending turn.
+normal completion path has no intervening tick. Shipped instead: skip while
+the session's `updatedAt` predates the pending turn, for at most four polling
+intervals after dispatch.
 
 **D21. `attemptCount` bumps twice per re-launch cycle** (claim plus
 retry-later), halving the effective `max_repair_cycles`. Accepted as a
@@ -343,9 +357,11 @@ decision.
 runner and the web manual-run path share them.
 
 **D27. Outcomes come from a machine-readable block, never from diffs.** The
-last fenced `agent-board-result` block wins; any parse failure is treated as
-`continue`. The cost is protocol-level Symphony non-conformance: outcomes
-arrive as assistant text, not a structured worker reply.
+last fenced `agent-board-result` block wins. A worker parse failure is treated
+as `continue`; a reviewer parse failure nudges the same review thread to
+produce a valid result, subject to the turn budget. The cost is protocol-level
+Symphony non-conformance: outcomes arrive as assistant text, not a structured
+worker reply.
 
 **D28. Continuation prompts never resend the full brief.** Card id, reason,
 "continue in this workspace", protocol footer.
