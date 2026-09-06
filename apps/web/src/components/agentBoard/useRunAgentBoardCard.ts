@@ -16,11 +16,14 @@ import {
   type ScopedProjectRef,
 } from "@t3tools/contracts";
 import { buildImplementationPrompt } from "@t3tools/shared/agentBoardPrompts";
-import { useCallback } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { useCallback, useMemo } from "react";
 
 import { cardWithLaunchFailure, cardWithLaunchedRun, updateCard } from "./agentBoardModel";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { readProjects } from "~/state/entities";
+import { serverEnvironment } from "~/state/server";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
@@ -39,6 +42,11 @@ export function useRunAgentBoardCard(
   workspaceRoot: string | undefined,
 ) {
   const newThread = useNewThreadHandler();
+  const configAtom = useMemo(
+    () => serverEnvironment.configValueAtom(projectRef.environmentId),
+    [projectRef.environmentId],
+  );
+  const serverConfig = useAtomValue(configAtom);
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const saveAgentBoard = useAtomCommand(projectEnvironment.saveAgentBoard, {
     reportFailure: false,
@@ -48,6 +56,13 @@ export function useRunAgentBoardCard(
     async (claim: AgentBoardClaimResult): Promise<AgentBoardFile> => {
       if (!workspaceRoot) throw new Error("Open a project workspace before running a card.");
       const { environmentId } = projectRef;
+      const project = readProjects().find(
+        (p) => p.id === projectRef.projectId && p.environmentId === environmentId,
+      );
+      const modelSelection =
+        claim.card.modelSelection ??
+        project?.defaultModelSelection ??
+        serverConfig?.settings.defaultModelSelection;
 
       // Both saves are derived from the board the claim RPC just returned, so
       // that is the board they are allowed to overwrite; anything the runner
@@ -76,6 +91,10 @@ export function useRunAgentBoardCard(
         `agent-board/${claim.workspacePath.slice(claim.workspacePath.lastIndexOf("/") + 1)}`;
 
       try {
+        if (!modelSelection)
+          throw new Error(
+            "Select an agent and model on this task, or configure a project/server default.",
+          );
         // ponytail: no reuse check — a second run of a card whose worktree
         // still exists fails here with git's own message and parks the card.
         // Add an "is this already a worktree" probe if that retry gets common.
@@ -96,6 +115,12 @@ export function useRunAgentBoardCard(
         const session = await newThread(projectRef, { worktreePath: workspacePath, branch });
         if (session === null) throw new Error("Could not open a thread for this card.");
         const runId = RuntimeSessionId.make(session.threadId);
+        if (modelSelection) {
+          useComposerDraftStore.getState().setModelSelection(session.draftId, modelSelection, {
+            explicit: true,
+            replaceOptions: true,
+          });
+        }
         useComposerDraftStore
           .getState()
           .setPrompt(session.draftId, buildImplementationPrompt(claim.card));
@@ -118,13 +143,18 @@ export function useRunAgentBoardCard(
           updateCard(
             claim.board,
             claim.card.id,
-            (card) => cardWithLaunchFailure(card, { error: failure.message }, now),
+            (card) =>
+              cardWithLaunchFailure(
+                card,
+                { error: failure.message, missingModel: !modelSelection },
+                now,
+              ),
             now,
           ),
         ).catch(() => undefined);
         throw failure;
       }
     },
-    [createWorktree, newThread, projectRef, saveAgentBoard, workspaceRoot],
+    [createWorktree, newThread, projectRef, saveAgentBoard, serverConfig, workspaceRoot],
   );
 }

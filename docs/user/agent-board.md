@@ -73,8 +73,11 @@ While it is on, the runner:
 Answer a Needs Decision card from its dialog. Your answer is kept as a constraint on the card's
 brief, so the next agent turn carries it, and the card goes back to Ready.
 
-The project needs a default model selected before the runner can run anything. Without one, cards
-park at Needs Decision and ask you to set it.
+Open a task and choose **Agent and model** to override its default. Save, Run, and state changes
+persist your choice. Implementation, repairs, and reviews use the task selection, then the project
+default, then the server default. Without any model, cards park at Needs Decision.
+Use **Use project default** to clear an override. Selection is locked while a task is Running,
+Diagnosing, or Reviewing.
 
 ## Running a card yourself
 

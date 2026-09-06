@@ -126,6 +126,7 @@ function PlanningRouteView() {
           the panel keeps it unmounted from the very first commit. */}
       {planningDisabled ? null : (
         <AgentBoardPanel
+          projectDefault={project?.defaultModelSelection ?? null}
           environmentId={projectRef.environmentId}
           workspaceRoot={workspaceRoot}
           onRunClaimedCard={runClaimedCard}

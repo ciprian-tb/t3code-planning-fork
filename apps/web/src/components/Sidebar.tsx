@@ -46,7 +46,6 @@ import {
   FolderPlusIcon,
   GitBranchIcon,
   KanbanSquareIcon,
-  MessageSquareIcon,
   PinIcon,
   PinOffIcon,
   PlusIcon,

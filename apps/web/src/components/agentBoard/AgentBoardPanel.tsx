@@ -10,6 +10,7 @@ import type {
   AgentBoardFile,
   AgentBoardState,
   EnvironmentId,
+  ModelSelection,
 } from "@t3tools/contracts";
 import { AGENT_BOARD_RELATIVE_PATH } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -54,6 +55,7 @@ type BoardView = (typeof VIEWS)[number]["id"];
 
 export interface AgentBoardPanelProps {
   readonly environmentId: EnvironmentId;
+  readonly projectDefault: ModelSelection | null;
   readonly workspaceRoot: string | undefined;
   /**
    * Launches the claimed card; the panel only claims it and adopts whatever
@@ -69,6 +71,7 @@ function failureMessage(error: unknown, fallback: string): string {
 
 export const AgentBoardPanel = memo(function AgentBoardPanel({
   environmentId,
+  projectDefault,
   workspaceRoot,
   onRunClaimedCard,
   className,
@@ -85,6 +88,7 @@ export const AgentBoardPanel = memo(function AgentBoardPanel({
   return (
     <AgentBoardPanelContent
       environmentId={environmentId}
+      projectDefault={projectDefault}
       workspaceRoot={workspaceRoot}
       onRunClaimedCard={onRunClaimedCard}
       {...(className ? { className } : {})}
@@ -94,6 +98,7 @@ export const AgentBoardPanel = memo(function AgentBoardPanel({
 
 function AgentBoardPanelContent({
   environmentId,
+  projectDefault,
   workspaceRoot,
   onRunClaimedCard,
   className,
@@ -147,48 +152,48 @@ function AgentBoardPanelContent({
   // runner works reverts the runner's transitions on every other card.
   const expectedUpdatedAt = board?.updatedAt;
   const commitBoard = useCallback(
-    (nextBoard: AgentBoardFile) => {
+    async (nextBoard: AgentBoardFile): Promise<boolean> => {
       setAdoptedBoard(nextBoard);
       setBusy(true);
       setError(null);
-      void (async () => {
-        const result = await saveAgentBoard({
-          environmentId,
-          input: {
-            cwd: workspaceRoot,
-            board: nextBoard,
-            ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
-          },
-        });
-        setBusy(false);
-        if (result._tag === "Success") {
-          setAdoptedBoard(result.value.board);
-          return;
-        }
-        if (isAtomCommandInterrupted(result)) return;
-        const failure = failureMessage(squashAtomCommandFailure(result), "Could not save board.");
-        if (isBoardConflictError(failure)) {
-          // The edit is gone either way; reload so the retry starts from the
-          // board the runner actually left behind.
-          setAdoptedBoard(null);
-          refreshBoard();
-          const description =
-            "The board changed while you were editing; your change was not saved. Try again.";
-          setError(description);
-          toastManager.add(
-            stackedThreadToast({ type: "error", title: "Board changed", description }),
-          );
-          return;
-        }
-        setError(failure);
+      const result = await saveAgentBoard({
+        environmentId,
+        input: {
+          cwd: workspaceRoot,
+          board: nextBoard,
+          ...(expectedUpdatedAt ? { expectedUpdatedAt } : {}),
+        },
+      });
+      setBusy(false);
+      if (result._tag === "Success") {
+        setAdoptedBoard(result.value.board);
+        return true;
+      }
+      if (isAtomCommandInterrupted(result)) return false;
+      const failure = failureMessage(squashAtomCommandFailure(result), "Could not save board.");
+      if (isBoardConflictError(failure)) {
+        // The edit is gone either way; reload so the retry starts from the
+        // board the runner actually left behind.
+        setAdoptedBoard(null);
+        refreshBoard();
+        const description =
+          "The board changed while you were editing; your change was not saved. Try again.";
+        setError(description);
         toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Board save failed",
-            description: failure,
-          }),
+          stackedThreadToast({ type: "error", title: "Board changed", description }),
         );
-      })();
+        return false;
+      }
+      setAdoptedBoard(null);
+      setError(failure);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Board save failed",
+          description: failure,
+        }),
+      );
+      return false;
     },
     [environmentId, expectedUpdatedAt, refreshBoard, saveAgentBoard, workspaceRoot],
   );
@@ -230,6 +235,8 @@ function AgentBoardPanelContent({
       setBusy(true);
       setError(null);
       void (async () => {
+        if (!(await commitBoard(updateCard(board, card.id, () => card)))) return;
+        setBusy(true);
         const result = await claimAgentBoardCard({
           environmentId,
           input: { cwd: workspaceRoot, cardId: card.id },
@@ -261,7 +268,8 @@ function AgentBoardPanelContent({
           });
         } catch (runError) {
           const description = failureMessage(runError, "Could not start the claimed card.");
-          setAdoptedBoard(result.value.board);
+          setAdoptedBoard(null);
+          refreshBoard();
           setError(description);
           toastManager.add(stackedThreadToast({ type: "error", title: "Run failed", description }));
         } finally {
@@ -269,7 +277,15 @@ function AgentBoardPanelContent({
         }
       })();
     },
-    [board, claimAgentBoardCard, environmentId, onRunClaimedCard, refreshBoard, workspaceRoot],
+    [
+      board,
+      claimAgentBoardCard,
+      commitBoard,
+      environmentId,
+      onRunClaimedCard,
+      refreshBoard,
+      workspaceRoot,
+    ],
   );
 
   const openCardDetails = useCallback((card: AgentBoardCard) => {
@@ -368,13 +384,17 @@ function AgentBoardPanelContent({
       )}
 
       <AgentBoardCardDialog
+        environmentId={environmentId}
+        projectDefault={projectDefault}
         card={openCard}
         busy={busy}
         onOpenChange={(open) => {
           if (!open) setOpenCardId(null);
         }}
         onSave={(next) => editCard(next.id, () => next)}
-        onMoveCard={(card, state) => moveCard(card.id, state)}
+        onMoveCard={(card, state) =>
+          editCard(card.id, () => cardWithState(card, state, new Date().toISOString()))
+        }
         onRunCard={runCard}
       />
     </div>

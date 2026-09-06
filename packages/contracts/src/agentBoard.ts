@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { ModelSelection } from "./orchestration.ts";
+
 import { AgentBoardWorkflowSource } from "./agentBoardWorkflow.ts";
 import {
   IsoDateTime,
@@ -139,6 +141,7 @@ export type AgentBoardGraphLink = typeof AgentBoardGraphLink.Type;
 const AgentBoardCardBaseFields = {
   id: AgentBoardCardId,
   title: TrimmedNonEmptyString,
+  modelSelection: Schema.optionalKey(ModelSelection),
   priority: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(3))),
   area: Schema.optionalKey(TrimmedNonEmptyString),
   slice: Schema.optionalKey(TrimmedNonEmptyString),

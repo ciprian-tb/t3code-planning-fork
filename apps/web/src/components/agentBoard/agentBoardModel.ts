@@ -7,6 +7,7 @@ import {
   AgentBoardCard as AgentBoardCardSchema,
   type AgentBoardCard,
   type AgentBoardCardId,
+  type ModelSelection,
   type AgentBoardFile,
   type AgentBoardIntentBrief,
   type AgentBoardRunnerStatus,
@@ -64,6 +65,7 @@ export interface IntentDraft {
 }
 
 export interface DetailDraft {
+  modelSelection: ModelSelection | null;
   title: string;
   area: string;
   slice: string;
@@ -295,6 +297,7 @@ export function runCardError(card: AgentBoardCard, board: AgentBoardFile): strin
 
 export function detailDraftFromCard(card: AgentBoardCard): DetailDraft {
   return {
+    modelSelection: card.modelSelection ?? null,
     title: card.title,
     area: card.area ?? "",
     slice: card.slice ?? "",
@@ -314,6 +317,7 @@ function cardIdsFromDraft(value: string): AgentBoardCardId[] {
 /** Applies the whole detail draft back onto a card, dropping blanked-out optional keys. */
 export function cardWithDetailDraft(card: AgentBoardCard, draft: DetailDraft): AgentBoardCard {
   const {
+    modelSelection: _modelSelection,
     area: _area,
     slice: _slice,
     slicePlanPath: _slicePlanPath,
@@ -323,8 +327,12 @@ export function cardWithDetailDraft(card: AgentBoardCard, draft: DetailDraft): A
   const slice = optionalTrimmedValue(draft.slice);
   const slicePlanPath = optionalTrimmedValue(draft.slicePlanPath);
   const reason = optionalTrimmedValue(draft.parallelismReason);
+  const modelSelection = ["Running", "Diagnosing", "Reviewing"].includes(card.state)
+    ? card.modelSelection
+    : draft.modelSelection;
   return {
     ...withoutPlanningFields,
+    ...(modelSelection ? { modelSelection } : {}),
     title: draft.title.trim() || card.title,
     dependencies: cardIdsFromDraft(draft.dependencies),
     parallelism: {
@@ -437,7 +445,8 @@ export function cardWithLaunchedRun(
 
 /**
  * A launch that died after the claim, parked for the human who started it:
- * `Diagnosing` with `phase: "manual"`, so the runner leaves it alone.
+ * `Diagnosing` with `phase: "manual"`, so the runner leaves it alone. Missing
+ * model configuration uses `Needs Decision` so the picker remains editable.
  *
  * No run id is recorded, ever. The thread a failed manual launch may have
  * opened is a client-side draft with no server thread behind it until the user
@@ -446,12 +455,12 @@ export function cardWithLaunchedRun(
  */
 export function cardWithLaunchFailure(
   card: AgentBoardCard,
-  failure: { readonly error: string },
+  failure: { readonly error: string; readonly missingModel?: boolean },
   timestamp: string,
 ): AgentBoardCard {
   return {
     ...card,
-    state: "Diagnosing",
+    state: failure.missingModel ? "Needs Decision" : "Diagnosing",
     runtime: {
       ...runtimeWithoutTransientFields(card, timestamp),
       phase: "manual",

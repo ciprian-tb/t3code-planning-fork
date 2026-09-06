@@ -1,4 +1,5 @@
 """Launcher checks with fake CLIs; never starts models or the real app."""
+import json
 import os
 from pathlib import Path
 import shutil
@@ -48,6 +49,9 @@ printf '%s' "$OPENCODE_CONFIG" > "$TEST_LOG/config"
             # T3 starts from the script's checkout and uses isolated app state.
             (project / "scripts").mkdir()
             (project / "node_modules").mkdir()
+            settings_path = project / ".t3" / "userdata" / "settings.json"
+            settings_path.parent.mkdir(parents=True)
+            settings_path.write_text(json.dumps({"theme": "dark", "providers": {"codex": {"enabled": True}}}))
             copied = project / "scripts" / SCRIPT.name
             shutil.copyfile(SCRIPT, copied)
             vp = root / "vp"
@@ -60,6 +64,12 @@ printf '%s' "$OPENCODE_CONFIG" > "$TEST_LOG/config"
             args = (root / "vp-args").read_text().splitlines()
             self.assertEqual(args[:3], ["run", "dev", "--home-dir"])
             self.assertEqual(Path(args[3]).resolve(), (project / ".t3").resolve())
+
+            settings = json.loads(settings_path.read_text())
+            self.assertTrue(settings["providers"]["opencode"]["enabled"])
+            self.assertEqual(settings["defaultModelSelection"], {"instanceId": "opencode", "model": "mtplx/actual-model", "options": []})
+            self.assertTrue(settings["providers"]["codex"]["enabled"])
+            self.assertEqual(settings["theme"], "dark")
 
             # Terminating only the launcher must also stop its own app process.
             (root / "opencode").write_text('''#!/usr/bin/env python3

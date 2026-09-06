@@ -44,6 +44,18 @@ const boardWithCard = (card: object) => ({
 });
 
 describe("AgentBoardFile", () => {
+  it("preserves a task model override and accepts old cards without one", () => {
+    const modelSelection = { instanceId: "opencode", model: "mtplx/local", options: [] };
+    const board = decodeAgentBoardFile(boardWithCard({ ...seededReadyCard, modelSelection }));
+    expect(board.cards[0]?.modelSelection).toEqual(modelSelection);
+    expect(
+      decodeAgentBoardFile(boardWithCard(seededReadyCard)).cards[0]?.modelSelection,
+    ).toBeUndefined();
+    expect(() =>
+      decodeAgentBoardFile(boardWithCard({ ...seededReadyCard, modelSelection: { model: "" } })),
+    ).toThrow();
+  });
+
   it("defaults a minimal board to kanban with no cards", () => {
     const board = decodeAgentBoardFile({
       schemaVersion: 1,

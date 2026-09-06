@@ -12,11 +12,17 @@ vp i
 ./scripts/start-mtplx.sh
 ```
 
-Use the pairing URL printed by T3. In **Settings > Providers**, enable OpenCode
-and refresh provider status. Leave its **Server URL** empty so T3 starts its
-own OpenCode helper. That setting expects an OpenCode server, not the MTPLX
-inference endpoint. Select the displayed `mtplx/<model-id>` model as the
-project default to use it for autonomous board tasks.
+Use the pairing URL printed by T3. The launcher enables OpenCode, clears its
+helper Server URL, and selects the discovered `mtplx/<model-id>` as the server
+default in this checkout's `.t3/userdata/settings.json`. Starting T3 refreshes
+the provider/model inventory using the generated OpenCode configuration.
+Existing project defaults still take precedence over the server default.
+
+Open a board task and use **Agent and model** to select OpenCode and MTPLX for
+that task. **Save**, **Run**, and state changes persist the selection. Run opens
+a prepared Chat draft; send it to begin. Moving a card to Ready lets the enabled
+runner launch it automatically. **Configure agents** opens provider settings
+if you need to refresh provider status again.
 
 To launch OpenCode's terminal interface directly in a project:
 
@@ -40,16 +46,12 @@ Keep the launcher terminal open. On exit it removes its temporary config and
 stops only the MTPLX process it started; an existing server is left running.
 T3 uses this checkout's `.t3` directory for development state.
 
-## Task-selection gap
+## Task selection
 
-The board currently has no per-card agent/model selection. Automated launches,
-continuations, and reviews use the project's default model. Manual **Run**
-opens a draft thread; select its model in Chat before sending.
-
-A per-task picker requires a persisted card selection, a dialog control, and
-selection handling in both manual and automated launch paths. The dialog must
-save a changed selection before claiming the card: the server launches the
-saved card, not an unsaved dialog draft. The launcher does not add this feature.
+Task selection overrides the project default, which overrides the server
+default. Implementation, repair, and review use this precedence. Select
+**Use project default** to remove a task override. Selection is locked while
+the task is Running, Diagnosing, or Reviewing.
 
 Upstream setup reference: [MTPLX's OpenCode guide](https://mtplx.com/docs/opencode/).
 The launcher uses JSON output because older installed versions of

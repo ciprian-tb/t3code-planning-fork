@@ -1,5 +1,5 @@
 import type { AgentBoardCard, AgentBoardCardId, AgentBoardFile } from "@t3tools/contracts";
-import { RuntimeSessionId } from "@t3tools/contracts";
+import { RuntimeSessionId, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -639,6 +639,24 @@ describe("cardWithLaunchFailure", () => {
     expect(parked.runtime.currentError).toBe("worktree add failed");
   });
 
+  it("keeps missing-model failures editable", () => {
+    const parked = cardWithLaunchFailure(
+      running(),
+      { error: "Choose a model", missingModel: true },
+      FAILED_AT,
+    );
+    expect(parked.state).toBe("Needs Decision");
+    const selection = {
+      instanceId: ProviderInstanceId.make("opencode"),
+      model: "mtplx/local",
+      options: [],
+    };
+    expect(
+      cardWithDetailDraft(parked, { ...detailDraftFromCard(parked), modelSelection: selection })
+        .modelSelection,
+    ).toEqual(selection);
+  });
+
   /**
    * A failed manual launch may have opened a thread, but that thread is a
    * client draft with no server thread behind it until the user sends. Writing
@@ -659,5 +677,32 @@ describe("cardWithLaunchFailure", () => {
     const parked = cardWithLaunchFailure(running(), { error: "boom" }, FAILED_AT);
     expect(parked.runtime.workspacePath).toBe(".t3/workspaces/CARD-1");
     expect(parked.runtime.lastHeartbeatAt).toBe(FAILED_AT);
+  });
+});
+
+describe("task model override", () => {
+  it("saves a selected agent and can return to the project default", () => {
+    const original = card("A");
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("opencode"),
+      model: "mtplx/local",
+      options: [],
+    };
+    const selected = cardWithDetailDraft(original, {
+      ...detailDraftFromCard(original),
+      modelSelection,
+    });
+    expect(selected.modelSelection).toEqual(modelSelection);
+    const running = { ...selected, state: "Running" as const };
+    expect(
+      cardWithDetailDraft(running, { ...detailDraftFromCard(running), modelSelection: null })
+        .modelSelection,
+    ).toEqual(modelSelection);
+    expect(detailDraftFromCard(selected).modelSelection).toEqual(modelSelection);
+    const cleared = cardWithDetailDraft(selected, {
+      ...detailDraftFromCard(selected),
+      modelSelection: null,
+    });
+    expect(cleared.modelSelection).toBeUndefined();
   });
 });

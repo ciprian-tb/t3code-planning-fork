@@ -1,3 +1,4 @@
+import type { PlatformError } from "effect/PlatformError";
 import {
   ApprovalRequestId,
   EventId,
@@ -230,11 +231,23 @@ const resolveClientFilePath = Effect.fn("AntigravityAdapter.resolveClientFilePat
   }) {
     const { path } = input;
     const resolved = path.resolve(input.requestPath);
-    // Follow symlinks on the parent so a link out of the workspace cannot escape it.
-    const parent = yield* input.fileSystem
-      .realPath(path.dirname(resolved))
-      .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-    const real = path.join(parent, path.basename(resolved));
+    // Resolve existing leaf symlinks and the deepest existing parent of new files.
+    const realPathAllowingMissing = (target: string): Effect.Effect<string, PlatformError> =>
+      input.fileSystem.realPath(target).pipe(
+        Effect.catch((cause) => {
+          const parent = path.dirname(target);
+          return cause.reason._tag === "NotFound" && parent !== target
+            ? realPathAllowingMissing(parent).pipe(
+                Effect.map((realParent) => path.join(realParent, path.basename(target))),
+              )
+            : Effect.fail(cause);
+        }),
+      );
+    const real = yield* realPathAllowingMissing(resolved).pipe(
+      Effect.mapError(() =>
+        EffectAcpErrors.AcpRequestError.invalidParams(`Could not resolve '${input.requestPath}'.`),
+      ),
+    );
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );

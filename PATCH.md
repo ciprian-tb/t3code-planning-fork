@@ -29,31 +29,48 @@ that sits beside native Plan mode, not a replacement for it.
 
 ## Baseline and ancestry
 
-|                          |                                            |
-| ------------------------ | ------------------------------------------ |
-| Upstream baseline        | `2daff8c25adf701fddd062ae93b94cc57d420ec2` |
-| Previous public fork tip | `fb6244ca7577ab1d88fdd3daea6a85882414f3b6` |
-| Ancestry bridge commit   | `fdcbe886ac327ba3c1f5a8a775b61f6a6a8ed134` |
+Current upstream baseline: `7544d3d2c8e0145018d9adb7a1a650333b75362a`
+from `https://github.com/pingdotgg/t3code.git` (2026-09-06).
 
-The fork and upstream have no common git ancestor. The bridge commit is an
-`ours` merge of the old fork tip into the upstream baseline: the tree stays
-byte-for-byte upstream, and both histories become ancestors. That is what makes
-the public cutover a fast-forward instead of a force push.
+The original import used an unrelated-history bridge at `fdcbe886a` on top of
+`2daff8c2`. This update rebases the planning commits after that bridge onto
+current upstream. The old snapshot and bridge remain on the original branches;
+they are not replayed into this branch. Future updates can rebase this branch
+normally. Publishing this rewritten history requires a separate decision.
 
-To upgrade onto a newer upstream, repeat the shape:
+## Per-task agent selection
+
+Cards optionally persist `modelSelection` using the ordinary T3 model contract.
+The card dialog reuses the existing provider/model picker. Manual Run saves the
+edited card before claiming and explicitly applies its resolved selection to the
+draft. The runner uses task, project, then server default for implementation,
+continuation, and review. Older cards without a selection still work.
+
+Running, Diagnosing, and Reviewing cards cannot change their selection: the
+editor preserves it and the filesystem save boundary rejects stale changes.
+The runner now depends on `ServerSettingsService` for the server fallback.
+
+`scripts/start-mtplx.sh` uses the existing OpenCode adapter, discovers MTPLX's
+served model, and enables OpenCode and the MTPLX default in checkout-local dev
+settings. See `docs/operations/mtplx-opencode.md`. No additional provider adapter
+or global OpenCode configuration is installed.
+
+## Upstream compatibility fixes
+
+The full macOS test run exposed a session scanner path mismatch: canonical
+`/private/var` candidates were compared only with `/var` exclusion roots.
+`AgentSessionScanner.ts` now compares both forms. The provider registry
+re-probe test counts its Codex commands without counting incidental Homebrew
+discovery. Antigravity client file access now resolves the deepest existing
+ancestor before checking containment, allowing new nested files under symlinked
+roots and rejecting leaf symlinks that point outside the workspace.
+Desktop tests must run without inherited `ELECTRON_RUN_AS_NODE`. On macOS,
+use a canonical `TMPDIR` for upstream fixtures that compare emitted real paths
+with their temporary directory spelling:
 
 ```bash
-git fetch <upstream-remote> main
-git switch -c upgrade/next <upstream-remote>/main
-git merge --strategy=ours --allow-unrelated-histories --no-edit \
-  -m "chore: preserve planning fork history" main
-# then port the patch by capability, file by file, using the table below
-git merge-base --is-ancestor main HEAD
-git merge-base --is-ancestor <upstream-remote>/main HEAD
+TMPDIR="$(cd "${TMPDIR:-/tmp}" && pwd -P)" env -u ELECTRON_RUN_AS_NODE vp run -r --concurrency-limit 2 test
 ```
-
-Port by capability. Do not replay the old snapshot commit — most of the old
-attachment files no longer exist upstream.
 
 ## Integration points
 

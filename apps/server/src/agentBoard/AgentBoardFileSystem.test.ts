@@ -61,6 +61,27 @@ const run = <A, E>(
 ) => effect.pipe(Effect.scoped, Effect.provide(layer));
 
 describe("AgentBoardFileSystem", () => {
+  it.effect("rejects changing the model of a claimed card", () =>
+    run(
+      Effect.gen(function* () {
+        const cwd = yield* tempProjectRoot;
+        const service = yield* AgentBoardFileSystem;
+        yield* service.save({ cwd, board: readyBoardWith(cwd, "TASK") });
+        const claimed = yield* service.claim({ cwd, cardId: cardId("TASK") });
+        const edited = decodeBoard({
+          ...claimed.board,
+          cards: claimed.board.cards.map((card) => ({
+            ...card,
+            modelSelection: { instanceId: "opencode", model: "mtplx/local" },
+          })),
+        });
+        const result = yield* service.save({ cwd, board: edited }).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect((yield* service.load({ cwd })).board.cards[0]?.modelSelection).toBeUndefined();
+      }),
+    ),
+  );
+
   it.effect("creates a valid default board only when requested", () =>
     run(
       Effect.gen(function* () {

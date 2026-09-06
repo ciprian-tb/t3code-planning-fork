@@ -12,11 +12,14 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   AgentBoardFile,
+  ModelSelection,
   type AgentBoardCardId,
   type OrchestrationProject,
   ORPHANED_PROVIDER_SESSION_ERROR,
   type ThreadId,
 } from "@t3tools/contracts";
+
+import { layerTest as serverSettingsLayerTest } from "../serverSettings.ts";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { AgentBoardFileSystem, AgentBoardFileSystemLive } from "./AgentBoardFileSystem.ts";
@@ -94,7 +97,16 @@ const countingWorkflowFile = (loads: Map<string, number>) =>
     ),
   );
 
-const setup = (opts: { workflow?: string; model?: boolean; enabled?: boolean } = {}) =>
+const setup = (
+  opts: {
+    workflow?: string;
+    model?: boolean;
+    enabled?: boolean;
+    selection?: typeof ModelSelection.Type;
+    serverSelection?: typeof ModelSelection.Type;
+    selectionAtClaim?: typeof ModelSelection.Type;
+  } = {},
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -116,12 +128,39 @@ const setup = (opts: { workflow?: string; model?: boolean; enabled?: boolean } =
     } as unknown as OrchestrationProject;
     const harness = yield* makeHarness(project);
 
+    const filesystemLayer = AgentBoardFileSystemLive.pipe(Layer.provide(WorkspacePaths.layer));
+    const boardsLayer = opts.selectionAtClaim
+      ? Layer.effect(
+          AgentBoardFileSystem,
+          Effect.map(AgentBoardFileSystem, (service) => ({
+            ...service,
+            claim: (input: Parameters<typeof service.claim>[0]) =>
+              Effect.gen(function* () {
+                const loaded = yield* service.load(input);
+                yield* service.save({
+                  ...input,
+                  board: {
+                    ...loaded.board,
+                    cards: loaded.board.cards.map((card) => ({
+                      ...card,
+                      modelSelection: opts.selectionAtClaim!,
+                    })),
+                  },
+                });
+                return yield* service.claim(input);
+              }),
+          })),
+        ).pipe(Layer.provide(filesystemLayer))
+      : filesystemLayer;
     const workflowLoads = new Map<string, number>();
     const build = () =>
       Layer.build(
         AgentBoardRunnerLive.pipe(
           Layer.provide(harness.layer),
-          Layer.provideMerge(AgentBoardFileSystemLive.pipe(Layer.provide(WorkspacePaths.layer))),
+          Layer.provide(
+            serverSettingsLayerTest({ defaultModelSelection: opts.serverSelection ?? null }),
+          ),
+          Layer.provideMerge(boardsLayer),
           Layer.provideMerge(countingWorkflowFile(workflowLoads)),
           Layer.provide(NodeServices.layer),
         ),
@@ -132,7 +171,16 @@ const setup = (opts: { workflow?: string; model?: boolean; enabled?: boolean } =
     const boards = Context.get(runtime, AgentBoardFileSystem);
     const enabled = opts.enabled ?? true;
     // `save` never writes the runner block, so the flag goes through its owner.
-    yield* boards.save({ cwd: root, board: readyBoard(root, enabled) });
+    yield* boards.save({
+      cwd: root,
+      board: {
+        ...readyBoard(root, enabled),
+        cards: readyBoard(root, enabled).cards.map((card) => ({
+          ...card,
+          ...(opts.selection ? { modelSelection: opts.selection } : {}),
+        })),
+      },
+    });
     if (enabled) yield* boards.setRunnerEnabled({ cwd: root, enabled: true });
     yield* runner.start();
 
@@ -158,12 +206,76 @@ const setup = (opts: { workflow?: string; model?: boolean; enabled?: boolean } =
   });
 
 describe("AgentBoardRunner", () => {
+  it.effect(
+    "uses a task override for implementation, continuation, review and repair without a project default",
+    () =>
+      Effect.gen(function* () {
+        const selection = yield* Schema.decodeUnknownEffect(ModelSelection)({
+          instanceId: "opencode",
+          model: "mtplx/local",
+          options: [],
+        });
+        const s = yield* setup({ model: false, selection });
+        yield* s.runner.tick(s.root);
+        const [impl] = yield* s.threadIds();
+        expect(impl).toBeDefined();
+        yield* s.harness.finishTurn(impl!, { text: "continue" });
+        yield* s.runner.tick(s.root);
+        yield* s.harness.finishTurn(impl!, { text: DONE });
+        yield* s.runner.tick(s.root);
+        const [, review] = yield* s.threadIds();
+        expect(review).toBeDefined();
+        yield* s.harness.finishTurn(review!, { text: "missing result" });
+        yield* s.runner.tick(s.root);
+        yield* s.harness.finishTurn(review!, { text: CHANGES });
+        yield* s.runner.tick(s.root);
+        const commands = yield* Ref.get(s.harness.commands);
+        const launches = commands.filter(
+          (c) => c.type === "thread.create" || c.type === "thread.turn.start",
+        );
+        expect(launches.length).toBeGreaterThanOrEqual(7);
+        for (const command of launches) expect(command.modelSelection).toEqual(selection);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("falls back to the server default when the card and project have none", () =>
+    Effect.gen(function* () {
+      const selection = yield* Schema.decodeUnknownEffect(ModelSelection)({
+        instanceId: "opencode",
+        model: "mtplx/default",
+        options: [],
+      });
+      const s = yield* setup({ model: false, serverSelection: selection });
+      yield* s.runner.tick(s.root);
+      expect((yield* s.card()).state).toBe("Running");
+      const commands = yield* Ref.get(s.harness.commands);
+      expect(commands.find((c) => c.type === "thread.create")?.modelSelection).toEqual(selection);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("does nothing when runner.enabled is false", () =>
     Effect.gen(function* () {
       const s = yield* setup({ enabled: false });
       yield* s.runner.tick(s.root);
       expect((yield* s.card()).state).toBe("Ready");
       expect(yield* s.threadIds()).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("uses a selection saved between validation and claim", () =>
+    Effect.gen(function* () {
+      const selection = yield* Schema.decodeUnknownEffect(ModelSelection)({
+        instanceId: "opencode",
+        model: "mtplx/latest",
+        options: [],
+      });
+      const s = yield* setup({ selectionAtClaim: selection });
+      yield* s.runner.tick(s.root);
+      const commands = yield* Ref.get(s.harness.commands);
+      expect(commands.find((c) => c.type === "thread.create")?.modelSelection).toEqual(selection);
+      expect(commands.find((c) => c.type === "thread.turn.start")?.modelSelection).toEqual(
+        selection,
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

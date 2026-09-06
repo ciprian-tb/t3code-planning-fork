@@ -101,6 +101,9 @@ export const makeHarness = (project: OrchestrationProject): Effect.Effect<Harnes
 
     const engine = OrchestrationEngineService.of({
       readEvents: () => Stream.empty,
+      readThreadEvents: () => Stream.empty,
+      getThreadReplayStats: () => Effect.die("Runner must not query thread replay stats"),
+      subscribeDomainEvents: Effect.succeed(Stream.fromPubSub(events)),
       latestSequence: Ref.get(sequence),
       streamDomainEvents: Stream.fromPubSub(events),
       dispatch: (command) =>

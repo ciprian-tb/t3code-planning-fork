@@ -1,7 +1,13 @@
-import type { AgentBoardCard, AgentBoardState } from "@t3tools/contracts";
+import type {
+  AgentBoardCard,
+  AgentBoardState,
+  EnvironmentId,
+  ModelSelection,
+} from "@t3tools/contracts";
 import { PlayIcon } from "lucide-react";
 import { memo, useState } from "react";
 
+import { AgentBoardModelPicker } from "./AgentBoardModelPicker";
 import { answerDecision } from "./agentBoardDecision";
 import {
   MOVABLE_STATES,
@@ -29,6 +35,8 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Textarea } from "../ui/textarea";
 
 interface AgentBoardCardDialogProps {
+  readonly environmentId: EnvironmentId;
+  readonly projectDefault: ModelSelection | null;
   readonly card: AgentBoardCard | null;
   readonly busy: boolean;
   readonly onOpenChange: (open: boolean) => void;
@@ -64,6 +72,8 @@ function RuntimeStat({ label, value }: { readonly label: string; readonly value:
 }
 
 export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
+  environmentId,
+  projectDefault,
   card,
   busy,
   onOpenChange,
@@ -88,7 +98,7 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
     setError(null);
   }
 
-  const handleSave = () => {
+  const editedCard = () => {
     if (!card || !detailDraft || !intentDraft) return;
     const blocked = intentSaveError(card, intentDraft);
     if (blocked) {
@@ -97,8 +107,18 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
     }
     const intentBrief = intentBriefFromDraft(intentDraft);
     const next = cardWithDetailDraft(card, detailDraft);
-    onSave((intentBrief ? { ...next, intentBrief } : next) as AgentBoardCard);
+    return (intentBrief ? { ...next, intentBrief } : next) as AgentBoardCard;
+  };
+
+  const handleSave = () => {
+    const next = editedCard();
+    if (!next) return;
+    onSave(next);
     onOpenChange(false);
+  };
+  const handleRun = () => {
+    const next = editedCard();
+    if (next) onRunCard(next);
   };
 
   // The answer is applied to the card as the server last saw it, not to the
@@ -119,6 +139,17 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
               <DialogDescription>{card.id}</DialogDescription>
             </DialogHeader>
             <DialogPanel className="space-y-4">
+              <AgentBoardModelPicker
+                environmentId={environmentId}
+                value={
+                  ["Running", "Diagnosing", "Reviewing"].includes(card.state)
+                    ? (card.modelSelection ?? null)
+                    : detailDraft.modelSelection
+                }
+                projectDefault={projectDefault}
+                disabled={busy || ["Running", "Diagnosing", "Reviewing"].includes(card.state)}
+                onChange={(modelSelection) => setDetailDraft({ ...detailDraft, modelSelection })}
+              />
               <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
                 <LabeledField label="Title">
                   <Input
@@ -132,7 +163,10 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
                 <LabeledField label="State">
                   <Select
                     value={card.state}
-                    onValueChange={(value) => onMoveCard(card, value as AgentBoardState)}
+                    onValueChange={(value) => {
+                      const next = editedCard();
+                      if (next) onMoveCard(next, value as AgentBoardState);
+                    }}
                   >
                     <SelectTrigger className="h-9">
                       <SelectValue>{card.state}</SelectValue>
@@ -345,7 +379,7 @@ export const AgentBoardCardDialog = memo(function AgentBoardCardDialog({
                 <p className="text-[12px] text-rose-300 sm:mr-auto sm:self-center">{error}</p>
               ) : null}
               {card.state === "Ready" ? (
-                <Button variant="secondary" onClick={() => onRunCard(card)} disabled={busy}>
+                <Button variant="secondary" onClick={handleRun} disabled={busy}>
                   <PlayIcon className="size-3.5" />
                   Run
                 </Button>

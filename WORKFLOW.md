@@ -49,8 +49,8 @@ Rules the loader actually applies:
   matter block at all, and a missing `WORKFLOW.md` all mean "use the defaults".
 - Unknown keys are dropped, at any nesting depth. Symphony's `hooks:` and
   `codex:` blocks parse fine here and do nothing — this fork does not run
-  hooks, and the runner launches whatever provider the project's default model
-  selection points at rather than a fixed `codex app-server` command.
+  hooks, and the runner launches the task's selected provider/model, falling back to the project
+  and then server default rather than a fixed `codex app-server` command.
 - `tracker`, `workspace.root`, and `workspace.strategy` are validated and then
   discarded. They exist to reject a file written for another tracker.
 - `tracker.active_states` and `tracker.terminal_states` are informational. The
@@ -212,13 +212,13 @@ When a `Ready` card is claimed:
    the card id reduced to `[A-Za-z0-9_-]`, trimmed of dashes, capped at 80
    characters.
 4. A thread `Implement <title>` is created against that worktree with the
-   project's default model, `full-access` runtime mode, and the default
+   task's resolved model (task, project, then server default), `full-access` runtime mode, and the default
    interaction mode, and the first turn carries the full rendered card prompt.
 5. `runtime.implementationRunId` is written back only after the turn is
    accepted, so a `Running` card always names the thread that owns it.
 
-The card needs a default model on the project. Without one the runner parks it
-at `Needs Decision` before claiming, so the retry budget is untouched.
+The card needs a task selection or a project/server default. Without any model
+the runner parks it at `Needs Decision` before claiming, so the retry budget is untouched.
 
 Continuation turns reuse the same thread and send only the reason plus the
 board/task delta — never the full brief again. Review mirrors the launch with a
@@ -233,7 +233,7 @@ attempt, capped by `agent.max_retry_backoff_ms`).
 The card leaves the loop for `Needs Decision` only on an explicit
 `needs-decision` outcome, an exhausted `max_repair_cycles` or `max_turns`
 budget, a worker thread waiting on an approval or user input, or a missing
-project model. Answering the question from the card dialog appends
+task/project/server model. Answering the question from the card dialog appends
 `"<question> → <answer>"` to the intent brief's constraints and moves the card
 back to `Ready`, so the next prompt carries the answer.
 

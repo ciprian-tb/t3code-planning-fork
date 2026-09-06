@@ -57,6 +57,7 @@ import * as Stream from "effect/Stream";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import { AgentBoardFileSystem } from "./AgentBoardFileSystem.ts";
 import {
@@ -149,6 +150,7 @@ export const AgentBoardRunnerLive = Layer.effect(
     const workflowFile = yield* WorkflowFile;
     const engine = yield* OrchestrationEngineService;
     const snapshot = yield* ProjectionSnapshotQuery;
+    const settings = yield* ServerSettingsService;
     const git = yield* GitWorkflowService;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -379,23 +381,26 @@ export const AgentBoardRunnerLive = Layer.effect(
       });
 
     /**
-     * The project row plus its default model, or `undefined` when the project
+     * The project row plus the task/project/server model selection, or `undefined` when the project
      * is genuinely absent or has no model. A *failed* query is left in the
      * error channel on purpose: callers wrap this in `orRetryLater`, so a flaky
      * read backs off instead of parking the card on a false "no model".
      */
-    const projectContext = (root: string) =>
-      snapshot.getActiveProjectByWorkspaceRoot(root).pipe(
-        Effect.map(Option.getOrUndefined),
-        Effect.map((project) =>
-          project === undefined || project.defaultModelSelection === null
-            ? undefined
-            : { project, modelSelection: project.defaultModelSelection },
-        ),
-      );
+    const projectContext = (root: string, selected?: ModelSelection) =>
+      Effect.gen(function* () {
+        const project = Option.getOrUndefined(
+          yield* snapshot.getActiveProjectByWorkspaceRoot(root),
+        );
+        if (project === undefined) return undefined;
+        const modelSelection =
+          selected ??
+          project.defaultModelSelection ??
+          (yield* settings.getSettings).defaultModelSelection;
+        return modelSelection === null ? undefined : { project, modelSelection };
+      });
 
     const NO_MODEL =
-      "Set a default model for this project before running board cards, then move the card back to Ready.";
+      "Select an agent and model on this card, or set a project/server default, then move the card back to Ready.";
 
     // ---- launch ------------------------------------------------------------
 
@@ -417,13 +422,19 @@ export const AgentBoardRunnerLive = Layer.effect(
 
     const launch = (state: ProjectState, root: string, cardId: AgentBoardCardId) =>
       Effect.gen(function* () {
-        const context = yield* projectContext(root);
-        if (context === undefined) {
+        const { board } = yield* boards.load({ cwd: root });
+        const card = board.cards.find((candidate) => candidate.id === cardId);
+        if (card === undefined) return;
+        const initialContext = yield* projectContext(root, card.modelSelection);
+        if (initialContext === undefined) {
           // Checked before claiming: a missing model is a config problem, not
           // a failed attempt, and must not burn the retry budget.
           return yield* needsDecision(state, root, cardId, NO_MODEL);
         }
         const claimed = yield* boards.claim({ cwd: root, cardId });
+        // The card may have been edited while project resolution was yielding.
+        const context = yield* projectContext(root, claimed.card.modelSelection);
+        if (context === undefined) return yield* needsDecision(state, root, cardId, NO_MODEL);
         const workspacePath = path.join(root, claimed.workspacePath);
         yield* ensureExcluded(root);
 
@@ -478,7 +489,7 @@ export const AgentBoardRunnerLive = Layer.effect(
       reason: ContinuationReason,
     ) =>
       Effect.gen(function* () {
-        const context = yield* projectContext(root);
+        const context = yield* projectContext(root, card.modelSelection);
         const runId = card.runtime.implementationRunId;
         if (context === undefined || runId === undefined) {
           return yield* needsDecision(
@@ -527,7 +538,7 @@ export const AgentBoardRunnerLive = Layer.effect(
           state.tracked.delete(card.id);
           return;
         }
-        const context = yield* projectContext(root);
+        const context = yield* projectContext(root, card.modelSelection);
         if (context === undefined || card.runtime.workspacePath === undefined) {
           return yield* needsDecision(
             state,
@@ -568,7 +579,7 @@ export const AgentBoardRunnerLive = Layer.effect(
      */
     const nudgeReview = (state: ProjectState, root: string, card: AgentBoardCard) =>
       Effect.gen(function* () {
-        const context = yield* projectContext(root);
+        const context = yield* projectContext(root, card.modelSelection);
         const runId = card.runtime.reviewRunId;
         if (
           context === undefined ||

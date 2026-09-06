@@ -24,6 +24,7 @@ import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -244,13 +245,11 @@ export const make = Effect.gen(function* () {
   const load: AgentBoardFileSystem["Service"]["load"] = (input) =>
     mutations.withPermit(
       readBoard(input).pipe(
-        Effect.map(
-          (result): AgentBoardLoadResult => ({
-            board: result.board,
-            relativePath: AGENT_BOARD_RELATIVE_PATH,
-            created: result.created,
-          }),
-        ),
+        Effect.map((result): AgentBoardLoadResult => ({
+          board: result.board,
+          relativePath: AGENT_BOARD_RELATIVE_PATH,
+          created: result.created,
+        })),
       ),
     );
 
@@ -282,6 +281,17 @@ export const make = Effect.gen(function* () {
           return yield* boardError(
             `Agent board changed on disk since this view loaded it (expected ${input.expectedUpdatedAt}, found ${onDisk.updatedAt}). Reload the board and try again.`,
           );
+        }
+        const existingCards = new Map(onDisk?.cards.map((card) => [card.id, card]));
+        for (const card of input.board.cards) {
+          const existing = existingCards.get(card.id);
+          if (
+            existing &&
+            ["Running", "Diagnosing", "Reviewing"].includes(existing.state) &&
+            !Equal.equals(existing.modelSelection, card.modelSelection)
+          ) {
+            return yield* boardError(`Stop task ${card.id} before changing its agent or model.`);
+          }
         }
         const { runner: _clientRunner, ...clientBoard } = input.board;
         const board = yield* persistBoard(

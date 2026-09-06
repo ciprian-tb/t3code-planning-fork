@@ -5,9 +5,12 @@ place. `PROJECT.md` says what the product is for, `WORKFLOW.md` is the runtime
 contract the runner reads, `PATCH.md` is the repair map against upstream. This
 file is the design record: what was specified, what was decided, and why.
 
-Baseline: upstream T3 Code `2daff8c2` (2026-08-30). Design executed 2026-08-30
+Original baseline: upstream T3 Code `2daff8c2` (2026-08-30). Design executed 2026-08-30
 to 2026-09-05 as two plans (`.plans/`), sixteen tasks, merged to `main` at
 `4262fd74`.
+
+Rebased on upstream `7544d3d2` on 2026-09-06. Cards now optionally persist
+`modelSelection`; the dialog supports per-task agent/model choice.
 
 ## 1. Problem and north star
 
@@ -152,8 +155,8 @@ existing count; initial launches and fresh review starts are not gated by it.
 
 ### 4.5 Launch sequence
 
-1. Resolve the project and require `defaultModelSelection`; otherwise park at
-   `Needs Decision` with "Set a default model for this project", without a claim
+1. Resolve the project and the task selection, project default, or server default;
+   otherwise park at `Needs Decision` asking for a model, without a claim
    or an attempt-count increment.
 2. `AgentBoardFileSystem.claim` moves the card to `Running` atomically and
    reserves `workspacePath`.
@@ -163,7 +166,7 @@ existing count; initial launches and fresh review starts are not gated by it.
    create a worktree on branch `agent-board/<segment>`. Colliding segments get
    a hash suffix.
 5. `thread.create` with `runtimeMode: "full-access"`, `interactionMode:
-"default"`, the project's default model, the worktree path and branch.
+"default"`, the resolved task model, the worktree path and branch.
 6. `thread.turn.start` with the implementation prompt from
    `packages/shared/src/agentBoardPrompts.ts`.
 7. Record `implementationRunId`, `phase`, `turnCount` after the turn is

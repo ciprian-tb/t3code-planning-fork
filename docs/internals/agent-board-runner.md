@@ -93,7 +93,7 @@ The runner checks it in three places, and in each it does nothing at all:
 
 - the drag-out pass skips manual cards, so their thread is never stopped — it is not the runner's
   thread to stop;
-- the adopt loop skips them *before* the "no thread id recorded" park, because a manual card may
+- the adopt loop skips them _before_ the "no thread id recorded" park, because a manual card may
   legitimately have no runner-recorded thread;
 - the retry pass skips manual `Diagnosing` cards, since the web parks a failed manual launch there
   too.
@@ -109,17 +109,20 @@ of a worker that never existed would be worse than recording nothing.
 [AgentBoardFileSystem.ts][fs] as **exact string equality** against the on-disk `updatedAt`. Not a
 timestamp comparison, not a tolerance — the same string, or the save is refused.
 
-It exists because every board save from the panel ships the *whole* board. Without the check, a user
+It exists because every board save from the panel ships the _whole_ board. Without the check, a user
 editing one card from a snapshot taken thirty seconds ago would silently roll back every transition
-the runner made to *other* cards in the meantime. The panel therefore sends the `updatedAt` of the
+the runner made to _other_ cards in the meantime. The panel therefore sends the `updatedAt` of the
 board that was on screen before the edit, never the one the edit just stamped.
 
 On mismatch the server fails with a message that begins `Agent board changed`:
 
 ```ts
 // Prefix is load-bearing: clients match on it to offer a reload.
-return yield* boardError(
-  `Agent board changed on disk since this view loaded it (expected ${input.expectedUpdatedAt}, found ${onDisk.updatedAt}). Reload the board and try again.`,
+return (
+  yield *
+  boardError(
+    `Agent board changed on disk since this view loaded it (expected ${input.expectedUpdatedAt}, found ${onDisk.updatedAt}). Reload the board and try again.`,
+  )
 );
 ```
 
@@ -134,7 +137,7 @@ Two related rules in the same file:
 
 - `save` drops whatever `runner` block the client sent and keeps the one on disk.
   `setRunnerEnabled` is the only writer of that block, so a stale tab cannot switch the runner off
-  by saving a card edit. Only a *missing* board omits `runner` entirely, letting the schema default
+  by saving a card edit. Only a _missing_ board omits `runner` entirely, letting the schema default
   fill it; a corrupt or unreadable board fails the save instead.
 - `modify` is the server-internal read-modify-write and takes the mutation permit for both halves.
   The runner uses it rather than `load` + `save`, because those are two critical sections and a
@@ -192,3 +195,10 @@ card. The removal was of the periodic write, not of the field.
 [ws]: ../../apps/server/src/ws.ts
 [model]: ../../apps/web/src/components/agentBoard/agentBoardModel.ts
 [manualrun]: ../../apps/web/src/components/agentBoard/useRunAgentBoardCard.ts
+
+## Agent and model selection
+
+Cards have an optional `modelSelection`. Launch, continuation, review, and manual
+Run resolve it before project and server defaults. The dialog saves edits before
+manual claim. Active-card model changes are rejected by the filesystem save
+boundary as well as locked in the UI. Existing cards require no migration.

@@ -1263,6 +1263,25 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       }).pipe(Effect.flip);
       expect(escape._tag).toBe("AcpRequestError");
       expect(yield* fs.exists(path.join(outside, "escape.txt"))).toBe(false);
+      yield* fs.writeFileString(path.join(outside, "private.txt"), "private");
+      yield* fs.symlink(path.join(outside, "private.txt"), path.join(cwd, "linked.txt"));
+      expect(
+        Exit.isFailure(
+          yield* read({ sessionId: nativeSessionId, path: path.join(cwd, "linked.txt") }).pipe(
+            Effect.exit,
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        Exit.isFailure(
+          yield* write({
+            sessionId: nativeSessionId,
+            path: path.join(cwd, "linked.txt"),
+            content: "nope",
+          }).pipe(Effect.exit),
+        ),
+      ).toBe(true);
+      expect(yield* fs.readFileString(path.join(outside, "private.txt"))).toBe("private");
       const missing = yield* read({
         sessionId: nativeSessionId,
         path: path.join(cwd, "missing.txt"),

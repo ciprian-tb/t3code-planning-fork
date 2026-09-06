@@ -104,8 +104,27 @@ echo "OpenCode model: mtplx/$model_id"
 if [[ "$mode" == opencode ]]; then
   opencode --model "mtplx/$model_id" <&0 &
 else
-  echo "In T3: enable OpenCode in Settings > Providers, refresh, then select this model."
-  echo "For board tasks, set it as the project's default model. Leave OpenCode Server URL blank."
+  python3 - "$project_dir/.t3/userdata/settings.json" "$model_id" <<'PYSETTINGS'
+import json, os, sys, tempfile
+from pathlib import Path
+path = Path(sys.argv[1])
+settings = json.loads(path.read_text()) if path.exists() else {}
+providers = settings.setdefault("providers", {})
+providers.setdefault("opencode", {}).update(enabled=True, serverUrl="")
+instances = settings.setdefault("providerInstances", {})
+instance = instances.setdefault("opencode", {"driver": "opencode"})
+if instance["driver"] != "opencode":
+    sys.exit("The opencode instance ID belongs to another driver; choose another instance in T3.")
+instance["enabled"] = True
+instance.setdefault("config", {}).update(serverUrl="")
+settings["defaultModelSelection"] = {"instanceId": "opencode", "model": "mtplx/" + sys.argv[2], "options": []}
+path.parent.mkdir(parents=True, exist_ok=True)
+with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
+    json.dump(settings, output, indent=2)
+os.replace(output.name, path)
+PYSETTINGS
+  echo "OpenCode enabled; MTPLX selected as this dev server's default model."
+  echo "Open a task to choose its agent/model, or inherit the project/server default."
   vp run dev --home-dir "$project_dir/.t3" <&0 &
 fi
 app_pid=$!
