@@ -40,6 +40,9 @@ normally. Publishing this rewritten history requires a separate decision.
 
 ## Per-task agent selection
 
+`start-t3-planning.sh` starts the planning fork with checkout-local `.t3` state.
+Pass `--mtplx` to delegate to `scripts/start-mtplx.sh` for OpenCode/MTPLX setup.
+
 Cards optionally persist `modelSelection` using the ordinary T3 model contract.
 The card dialog reuses the existing provider/model picker. Manual Run saves the
 edited card before claiming and explicitly applies its resolved selection to the

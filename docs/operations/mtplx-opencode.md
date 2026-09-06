@@ -9,8 +9,11 @@ checkout, install T3's dependencies once and start it:
 
 ```bash
 vp i
-./scripts/start-mtplx.sh
+./start-t3-planning.sh --mtplx
 ```
+
+To start T3 Planning with its existing provider settings, run
+`./start-t3-planning.sh` without the flag.
 
 Use the pairing URL printed by T3. The launcher enables OpenCode, clears its
 helper Server URL, and selects the discovered `mtplx/<model-id>` as the server
