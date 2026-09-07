@@ -40,6 +40,11 @@ normally. Publishing this rewritten history requires a separate decision.
 
 ## Per-task agent selection
 
+The shared sidebar header exposes a labeled Kanban shortcut beside the wordmark.
+It opens the selected sidebar project, current board, or current thread's project,
+falling back to the default project. Clicking it re-enables a hidden Planning
+surface without starting its runner. With no project, the shortcut is disabled.
+
 `start-t3-planning.sh` starts the planning fork with checkout-local `.t3` state.
 Pass `--mtplx` to delegate to `scripts/start-mtplx.sh` for OpenCode/MTPLX setup.
 

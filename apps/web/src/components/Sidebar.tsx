@@ -4303,7 +4303,14 @@ export default function Sidebar() {
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <>
-      <SidebarChromeHeader isElectron={isElectron} />
+      <SidebarChromeHeader
+        isElectron={isElectron}
+        planningProjectRef={
+          scopedProjectGroup
+            ? { environmentId: scopedProjectGroup.environmentId, projectId: scopedProjectGroup.id }
+            : null
+        }
+      />
       <SidebarContent
         className="gap-0"
         fixedHeader={

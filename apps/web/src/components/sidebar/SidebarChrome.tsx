@@ -2,12 +2,18 @@ import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
+  KanbanSquareIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
-import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
+import { Link, useCanGoBack, useLocation, useNavigate, useParams } from "@tanstack/react-router";
+import type { ScopedProjectRef } from "@t3tools/contracts";
 
+import { useHandleNewThread } from "../../hooks/useHandleNewThread";
+import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
+import { usePlanningFeaturesDisabled } from "../../planningFeaturesState";
+import { Button } from "../ui/button";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironments } from "../../state/environments";
@@ -36,9 +42,24 @@ import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUp
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
+  planningProjectRef,
 }: {
   isElectron: boolean;
+  planningProjectRef?: ScopedProjectRef | null;
 }) {
+  const navigate = useNavigate();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const context = useHandleNewThread();
+  const params = useParams({ strict: false });
+  const contextualProject = resolveThreadActionProjectRef({
+    ...context,
+    activeThread: context.activeThread ?? undefined,
+  });
+  const planningProject =
+    params.environmentId && params.projectId
+      ? { environmentId: params.environmentId, projectId: params.projectId }
+      : (planningProjectRef ?? contextualProject);
+  const [planningDisabled, togglePlanningDisabled] = usePlanningFeaturesDisabled();
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const backdropVariant = resolveSidebarStageBackdropVariant(
@@ -67,6 +88,28 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         )}
       />
       <SidebarBrand onBackdrop={backdropVariant !== null} />
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn(
+          "relative z-10 ml-auto mr-2 shrink-0 gap-1.5 [-webkit-app-region:no-drag]",
+          backdropVariant && "text-white hover:bg-white/15 hover:text-white",
+        )}
+        disabled={!planningProject}
+        title={planningProject ? "Open Kanban board" : "Open a project to use Kanban"}
+        onClick={() => {
+          if (!planningProject) return;
+          if (planningDisabled) togglePlanningDisabled();
+          if (isMobile) setOpenMobile(false);
+          void navigate({
+            to: "/planning/$environmentId/$projectId",
+            params: planningProject,
+          });
+        }}
+      >
+        <KanbanSquareIcon className="size-3.5" />
+        Kanban
+      </Button>
       {pillLabel ? (
         <Badge
           className="relative z-10 ml-1 hidden rounded-full px-1.5 text-muted-foreground @[15rem]/sidebar-header:inline-flex"
