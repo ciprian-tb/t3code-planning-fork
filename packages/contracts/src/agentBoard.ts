@@ -266,7 +266,7 @@ export const AgentBoardClaimResult = Schema.Struct({
 });
 export type AgentBoardClaimResult = typeof AgentBoardClaimResult.Type;
 
-export class AgentBoardFileError extends Schema.TaggedErrorClass<AgentBoardFileError>()(
+export class AgentBoardFileError extends Schema.TaggedError<AgentBoardFileError>()(
   "AgentBoardFileError",
   {
     message: TrimmedNonEmptyString,

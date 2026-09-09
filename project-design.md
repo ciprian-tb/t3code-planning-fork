@@ -9,7 +9,7 @@ Original baseline: upstream T3 Code `2daff8c2` (2026-08-30). Design executed 202
 to 2026-09-05 as two plans (`.plans/`), sixteen tasks, merged to `main` at
 `4262fd74`.
 
-Rebased on upstream `7544d3d2` on 2026-09-06. Cards now optionally persist
+Rebased on upstream `6c583620` on 2026-09-09. Cards now optionally persist
 `modelSelection`; the dialog supports per-task agent/model choice.
 
 ## 1. Problem and north star

@@ -29,8 +29,8 @@ that sits beside native Plan mode, not a replacement for it.
 
 ## Baseline and ancestry
 
-Current upstream baseline: `7544d3d2c8e0145018d9adb7a1a650333b75362a`
-from `https://github.com/pingdotgg/t3code.git` (2026-09-06).
+Current upstream baseline: `6c583620ff7ad3235b135af7107c0543467eecfa`
+from `https://github.com/pingdotgg/t3code.git` (2026-09-09).
 
 The original import used an unrelated-history bridge at `fdcbe886a` on top of
 `2daff8c2`. This update rebases the planning commits after that bridge onto
